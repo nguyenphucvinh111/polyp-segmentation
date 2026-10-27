@@ -81,15 +81,43 @@ class MultiScaleDilatedBlock(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Semantic-Gated Boundary-Attention Guidance (Dual-Gated BAG)
+# Semantic-Gated Boundary-Attention Guidance with Dynamic Adaptive PID Tuning
 # ---------------------------------------------------------------------------
+
+class AdaptivePIDGating(nn.Module):
+    """
+    Dynamic Self-Tuning PID Controller Module:
+    Learns dynamic gains (Kp, Ki, Kd) based on the image's global feature context.
+    - Diminutive / hard lesions (like in ETIS): Boosts Kd (boundary) and Kp (fine spatial detail).
+    - Large / obvious lesions: Boosts Ki (integral global semantics) for uniform coverage.
+    """
+    def __init__(self, in_channels: int):
+        super().__init__()
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(in_channels, 16, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(16, 3, bias=False),
+            nn.Softmax(dim=1)  # Kp + Ki + Kd = 1.0
+        )
+
+    def forward(self, context_feat: torch.Tensor):
+        b = context_feat.size(0)
+        flat = self.pool(context_feat).view(b, -1)
+        gains = self.fc(flat)  # (B, 3)
+        kp = gains[:, 0].view(b, 1, 1, 1)
+        ki = gains[:, 1].view(b, 1, 1, 1)
+        kd = gains[:, 2].view(b, 1, 1, 1)
+        return kp, ki, kd
+
 
 class SemanticGatedBAG(nn.Module):
     """
-    Dual-Gated BAG Module:
+    Dual-Gated BAG Module with Adaptive PID Tuning:
     1. Saliency Gate (from I): Completely suppresses noise/reflections in P outside lesion candidates.
        Directly prevents distant false positives and collapses HD95!
     2. Boundary Gate (from D): Guides precise edge delineation around the lesion candidate.
+    3. Adaptive PID Gating: Dynamically balances P, I, D components per endoscopy frame.
     """
     def __init__(self, p_channels: int, i_channels: int, out_channels: int):
         super().__init__()
@@ -108,6 +136,7 @@ class SemanticGatedBAG(nn.Module):
             nn.Conv2d(i_channels, 1, kernel_size=1, bias=False),
             nn.Sigmoid()
         )
+        self.pid_gate = AdaptivePIDGating(i_channels)
         self.fuse = DepthwiseSeparableConv(out_channels, out_channels, kernel_size=3, padding=1)
 
     def forward(self, p_feat: torch.Tensor, i_feat: torch.Tensor, boundary_map: torch.Tensor) -> torch.Tensor:
@@ -125,7 +154,11 @@ class SemanticGatedBAG(nn.Module):
         i_proj = self.proj_i(i_feat)
         edge_att = torch.sigmoid(boundary_map)  # (B, 1, H, W)
 
-        guided_feat = edge_att * p_clean + (1.0 - edge_att) * i_proj
+        # 3. Dynamic PID Weighting (Kp, Ki, Kd)
+        kp, ki, kd = self.pid_gate(i_feat)
+
+        # Rescale by 3.0 so that the expected sum of weights is 1.0 (since kp+ki+kd = 1.0)
+        guided_feat = 3.0 * (kd * (edge_att * p_clean) + kp * p_clean + ki * i_proj)
         out = self.fuse(guided_feat) + i_proj
         return out
 

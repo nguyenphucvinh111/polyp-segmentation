@@ -22,10 +22,13 @@ visualizations/*
 !visualizations/.gitkeep
 logs/*
 !logs/.gitkeep
+edge_exports/*
+!edge_exports/.gitkeep
 
 # Reference cloned repos
 ref_repos/
 Ref/
+audit/
 
 # IDE / OS
 .vscode/

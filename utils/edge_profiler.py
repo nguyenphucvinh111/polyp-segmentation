@@ -119,21 +119,29 @@ class EdgeProfiler:
 
     def measure_cpu_latency(self, warmup: int = 5, runs: int = 20) -> dict:
         """Measure CPU inference latency (ms) and FPS for edge processors."""
+        # Enable multi-threading for CPU to accurately reflect multi-core edge devices
+        num_threads = max(1, min(8, os.cpu_count() or 4))
+        orig_threads = torch.get_num_threads()
+        torch.set_num_threads(num_threads)
+
         self.model.to('cpu')
         self.model.eval()
         dummy_input = torch.randn(1, 3, self.testsize, self.testsize, device='cpu')
 
-        with torch.no_grad():
+        with torch.inference_mode():
             for _ in range(warmup):
                 _ = self.model(dummy_input)
 
         timings = []
-        with torch.no_grad():
+        with torch.inference_mode():
             for _ in range(runs):
                 t0 = time.perf_counter()
                 _ = self.model(dummy_input)
                 t1 = time.perf_counter()
                 timings.append((t1 - t0) * 1000.0)
+
+        # Restore original thread setting
+        torch.set_num_threads(orig_threads)
 
         mean_latency = float(np.mean(timings))
         std_latency = float(np.std(timings))
