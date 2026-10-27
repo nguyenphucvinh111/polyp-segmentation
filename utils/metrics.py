@@ -12,7 +12,12 @@ Implementations strictly follow top-tier medical imaging & computer vision stand
 """
 
 import numpy as np
-import scipy.ndimage
+
+try:
+    import scipy.ndimage
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
 
 
 def dice_score(pred: np.ndarray, gt: np.ndarray, smooth: float = 1e-8) -> float:
@@ -59,6 +64,8 @@ def hd95_score(pred: np.ndarray, gt: np.ndarray) -> float:
     Measures boundary discrepancy between predicted and GT segmentation.
     Ref: Medpy implementation standard in MICCAI / IEEE TMI medical imaging benchmarks.
     """
+    if not HAS_SCIPY:
+        return float('nan')
     pred_b = (pred > 0.5).astype(bool)
     gt_b = (gt > 0.5).astype(bool)
 
@@ -89,11 +96,12 @@ def hd95_score(pred: np.ndarray, gt: np.ndarray) -> float:
 
 
 def weighted_fbeta(pred: np.ndarray, gt: np.ndarray, beta2: float = 1.0) -> float:
-
     """
     Weighted F-measure (wFb / F_beta^w).
     Reference: Margolin et al. "How to Evaluate Foreground Maps?", CVPR 2014.
     """
+    if not HAS_SCIPY:
+        return float('nan')
     pred = pred.astype(np.float64)
     gt = gt.astype(np.float64)
 

@@ -10,6 +10,7 @@ Faithfully reproduces the training mechanics from the PraNet paper:
 """
 
 import os
+import random
 from datetime import datetime
 import torch
 import torch.nn.functional as F
@@ -78,11 +79,13 @@ class Trainer:
         adjust_lr(self.optimizer, self.cfg.lr, epoch, self.cfg.decay_rate, self.cfg.decay_epoch)
         current_lr = self.optimizer.param_groups[0]['lr']
 
-        # Multi-scale training (PraNet standard: [0.75, 1.0, 1.25]) or Fast single-scale [1.0]
-        if getattr(self.cfg, 'fast', False) or getattr(self.cfg, 'no_multiscale', False):
-            size_rates = [1.0]
-        else:
-            size_rates = [0.75, 1.0, 1.25]
+        # Multi-scale strategy:
+        # 1. Fast mode: fixed 1.0x (single scale 352x352)
+        # 2. Legacy mode: sequential 3-pass [0.75, 1.0, 1.25] per batch (slow, ~8 hours)
+        # 3. Default mode: Stochastic Multi-Scale (random scale per batch from [0.75, 1.0, 1.25])
+        #    Full multi-scale representations across the epoch, runs blazingly fast (~50 mins for 100 epochs)!
+        is_fast = getattr(self.cfg, 'fast', False) or getattr(self.cfg, 'no_multiscale', False)
+        use_legacy = getattr(self.cfg, 'legacy_multiscale', False)
 
         loss_record = AvgMeter()
         loss_record2 = AvgMeter()
@@ -94,10 +97,18 @@ class Trainer:
         pbar = tqdm(train_loader, desc=f"Epoch [{epoch:03d}/{self.cfg.epochs:03d}] (lr={current_lr:.6f})")
 
         for i, (images, gts) in enumerate(pbar, start=1):
-            images = images.to(self.device)
-            gts = gts.to(self.device)
+            images = images.to(self.device, non_blocking=True)
+            gts = gts.to(self.device, non_blocking=True)
 
-            for rate in size_rates:
+            if is_fast:
+                batch_rates = [1.0]
+            elif use_legacy:
+                batch_rates = [0.75, 1.0, 1.25]
+            else:
+                # Stochastic Multi-Scale: samples random scale per batch (YOLO/Swin style)
+                batch_rates = [random.choice([0.75, 1.0, 1.25])]
+
+            for rate in batch_rates:
                 self.optimizer.zero_grad()
                 trainsize = int(round(self.cfg.trainsize * rate / 32) * 32)
 
@@ -134,14 +145,13 @@ class Trainer:
                     clip_gradient(self.optimizer, self.cfg.clip)
                     self.optimizer.step()
 
-                if rate == 1.0:
-                    bs = images.size(0)
-                    loss_record.update(loss.item(), bs)
-                    if isinstance(outputs, (tuple, list)) and len(outputs) == 4:
-                        loss_record2.update(l2.item(), bs)
-                        loss_record3.update(l3.item(), bs)
-                        loss_record4.update(l4.item(), bs)
-                        loss_record5.update(l5.item(), bs)
+                bs = images.size(0)
+                loss_record.update(loss.item(), bs)
+                if isinstance(outputs, (tuple, list)) and len(outputs) == 4:
+                    loss_record2.update(l2.item(), bs)
+                    loss_record3.update(l3.item(), bs)
+                    loss_record4.update(l4.item(), bs)
+                    loss_record5.update(l5.item(), bs)
 
             if i % 20 == 0 or i == total_step:
                 pbar.set_postfix({

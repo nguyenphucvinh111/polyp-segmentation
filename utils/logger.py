@@ -6,7 +6,12 @@ Logs per-epoch metrics to CSV and automatically renders publication-grade traini
 
 import os
 import csv
-import matplotlib.pyplot as plt
+
+try:
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
 
 
 class Logger:
@@ -63,7 +68,7 @@ class Logger:
         self._plot_curves()
 
     def _plot_curves(self):
-        if len(self.history) < 2:
+        if not HAS_MATPLOTLIB or len(self.history) < 2:
             return
 
         epochs = [r['epoch'] for r in self.history]

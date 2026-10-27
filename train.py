@@ -93,7 +93,8 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
     print(f"POLYP SEGMENTATION TRAINING PIPELINE")
     print(f"============================================================")
     print(f"Model: {args.model} | Loss: {args.loss} | Seed: {seed} | Device: {device}")
-    print(f"Resolution: {args.trainsize}x{args.trainsize} (Multi-scale: 0.75, 1.0, 1.25)")
+    ms_info = "Single-scale 352x352" if args.fast else ("Legacy 3-pass [0.75, 1.0, 1.25]" if getattr(args, 'legacy_multiscale', False) else "Stochastic Multi-scale [0.75, 1.0, 1.25] (Fast)")
+    print(f"Resolution: {args.trainsize}x{args.trainsize} ({ms_info})")
     print(f"LR: {args.lr} | Epochs: {args.epochs} | Batch: {args.batchsize}")
     print(f"Output Tag: {tag}")
     print(f"============================================================")
@@ -217,6 +218,8 @@ def main():
                         help='Enable multi-seed training mode')
     parser.add_argument('--fast', action='store_true', default=False,
                         help='Fast mode: train at single scale 352x352 (speeds up training 3x to 5x)')
+    parser.add_argument('--legacy_multiscale', action='store_true', default=False,
+                        help='Legacy sequential 3-pass multi-scale per batch (slow, ~8 hours)')
     parser.add_argument('--no_amp', action='store_true', default=False,
                         help='Disable Automatic Mixed Precision (AMP)')
     parser.add_argument('--batchsize', type=int, default=8,
