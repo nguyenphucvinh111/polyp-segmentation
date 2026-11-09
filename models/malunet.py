@@ -25,7 +25,10 @@ import torch.nn.functional as F
 try:
     from timm.layers import trunc_normal_
 except ImportError:
-    from timm.models.layers import trunc_normal_
+    try:
+        from timm.models.layers import trunc_normal_
+    except ImportError:
+        from torch.nn.init import trunc_normal_
 
 from models import register_model
 
