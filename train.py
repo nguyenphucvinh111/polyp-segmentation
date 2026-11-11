@@ -196,7 +196,9 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
         efficiency = evaluator.benchmark_efficiency(measure_cpu=True)
 
         # Benchmark accuracy across all 5 test sets
-        results = evaluator.evaluate_all(save_results_dir=results_dir)
+        use_tta = getattr(args, 'tta', False)
+        print(f"\n[Evaluation] Running benchmark across 5 datasets (TTA={use_tta})...")
+        results = evaluator.evaluate_all(save_results_dir=results_dir, use_tta=use_tta)
 
         # Save metrics
         evaluator.print_table(results, efficiency=efficiency, model_name=tag)
@@ -220,6 +222,8 @@ def main():
                         help='Fast mode: train at single scale 352x352 (speeds up training 3x to 5x)')
     parser.add_argument('--legacy_multiscale', action='store_true', default=False,
                         help='Legacy sequential 3-pass multi-scale per batch (slow, ~8 hours)')
+    parser.add_argument('--tta', action='store_true', default=False,
+                        help='Enable Test-Time Augmentation (Horizontal Flip Ensembling) during final benchmark')
     parser.add_argument('--no_amp', action='store_true', default=False,
                         help='Disable Automatic Mixed Precision (AMP)')
     parser.add_argument('--batchsize', type=int, default=8,

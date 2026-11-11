@@ -43,6 +43,7 @@ def main():
     parser.add_argument('--skip_profile', action='store_true', help='Skip Edge AI latency/FLOPs profiling')
     parser.add_argument('--skip_cpu', action='store_true', help='Skip CPU latency measurement')
     parser.add_argument('--profile_only', action='store_true', help='Only profile hardware metrics without running test sets')
+    parser.add_argument('--tta', action='store_true', default=False, help='Enable Test-Time Augmentation (Horizontal Flip Ensembling)')
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -83,8 +84,8 @@ def main():
         data_root = setup_dataset(args.data_root)
         evaluator.data_root = os.path.join(data_root, 'TestDataset') if not data_root.endswith('TestDataset') else data_root
 
-        print(f"[Test] Running dataset evaluation and saving masks to '{results_dir}'...")
-        results = evaluator.evaluate_all(save_results_dir=results_dir)
+        print(f"[Test] Running dataset evaluation (TTA={args.tta}) and saving masks to '{results_dir}'...")
+        results = evaluator.evaluate_all(save_results_dir=results_dir, use_tta=args.tta)
 
         # Print & save both Accuracy and Efficiency
         evaluator.print_table(results, efficiency=efficiency, model_name=args.model)

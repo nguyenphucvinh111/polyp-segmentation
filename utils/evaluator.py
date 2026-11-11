@@ -67,10 +67,11 @@ class Evaluator:
         )
         return profiler.profile(measure_cpu=measure_cpu)
 
-    def evaluate_all(self, save_results_dir: str = None) -> dict:
+    def evaluate_all(self, save_results_dir: str = None, use_tta: bool = False) -> dict:
         """
         Run inference and compute metrics on all 5 test sets.
         Optionally save binary prediction masks to save_results_dir.
+        Optionally apply Test-Time Augmentation (use_tta=True) via horizontal flip ensembling.
         """
         assert self.model is not None, "Model must be provided for evaluation."
         self.model.eval()
@@ -104,10 +105,19 @@ class Evaluator:
                     orig_h, orig_w = gt_np.shape
 
                     img_tensor = img_tensor.to(self.device)
-                    outputs = self.model(img_tensor)
+                    if use_tta:
+                        outputs1 = self.model(img_tensor)
+                        p1 = outputs1[-1] if isinstance(outputs1, (tuple, list)) else outputs1
 
-                    # Extract finest prediction (last element if multi-output)
-                    pred = outputs[-1] if isinstance(outputs, (tuple, list)) else outputs
+                        # Test-Time Augmentation: Horizontal Flip
+                        outputs2 = self.model(torch.flip(img_tensor, dims=[3]))
+                        p2 = outputs2[-1] if isinstance(outputs2, (tuple, list)) else outputs2
+                        p2 = torch.flip(p2, dims=[3])
+
+                        pred = (p1 + p2) * 0.5
+                    else:
+                        outputs = self.model(img_tensor)
+                        pred = outputs[-1] if isinstance(outputs, (tuple, list)) else outputs
 
                     # Upsample prediction back to original image size
                     pred = F.interpolate(pred, size=(orig_h, orig_w), mode='bilinear', align_corners=False)
