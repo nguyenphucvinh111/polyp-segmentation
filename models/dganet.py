@@ -397,12 +397,9 @@ class DGANet(nn.Module):
         out3 = F.interpolate(self.head3(d3), orig_size, mode='bilinear', align_corners=True)
         out2 = F.interpolate(self.head2(d2), orig_size, mode='bilinear', align_corners=True)
         out1 = F.interpolate(self.head1(d1), orig_size, mode='bilinear', align_corners=True)
-        # Boundary map auxiliary output — also upsampled to input resolution for
-        # consistent loss computation with ground-truth masks (structure loss).
-        # At inference, boundary_loss contribution is from this same prediction.
+        # Boundary map auxiliary output
         b_up = F.interpolate(b_map, orig_size, mode='bilinear', align_corners=True)
 
-        # Return order: (coarsest, mid, finest, boundary_aux)
-        # Trainer applies structure_loss to all 4; boundary head acts as an aux segmentor.
-        # Primary inference output = out1 (finest, index [-1] in tuple).
-        return out3, out2, out1, b_up
+        # Standard PraNet order: coarse -> fine.
+        # Index [-1] MUST be the finest segmentation output (out1) for evaluator & test scripts!
+        return b_up, out3, out2, out1
