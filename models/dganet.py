@@ -1,47 +1,28 @@
 """
-DGANet: Dilated Gated Asymmetric Network for Lightweight Polyp Segmentation.
+DGANet (v2 Flagship): Dilated Gated Asymmetric & Reverse Attention Network
+Engineered for SOTA Performance in Lightweight Medical Polyp Segmentation (< 1M Parameters).
 
-A novel lightweight architecture designed to surpass all <1M-parameter models
-(ENet, EDANet, MALUNet, ESPNetv2) on 5 polyp segmentation benchmarks.
+Key Architectural Pillars (Designed to surpass EDANet, ESPNetv2, and CMUNeXt):
+1. Info-Preserving Downsampler (InfoDown):
+   - Dual-path strided conv + maxpool concat.
+   - Prevents loss of diminutive lesions (<20px in ETIS-LaribPolypDB) during downsampling.
+2. Multi-Scale Dilated Asymmetric Receptive Field Block with SE (DilatedAsymRFB):
+   - Factorized 3x1 and 1x3 convolutions save 33% parameters while maintaining full cross-channel capacity.
+   - Dilations spanning up to d=12 provide receptive fields > 240px to capture large colon folds and mucosal morphology.
+   - Squeeze-and-Excitation (SE) channel recalibration dynamically suppresses colonoscopy specular reflection noise.
+3. Partial Decoder (PPD):
+   - Aggregates multi-scale semantic representations from high-level features (e3, e4, e5).
+   - Generates an accurate global semantic prior map (S_g) as coarse guidance.
+4. Boundary-Enhanced Reverse Attention (BERA):
+   - Progressive erasing mechanism: A_i = 1 - sigmoid(P(S_{i+1})).
+   - Forces decoder to focus precisely on ambiguous polyp margins and blurry mucosa boundaries.
+   - Injects high-resolution edge priors from shallow encoder layers to achieve razor-sharp contours.
+5. 4-Scale Deep Supervision:
+   - Returns (out_5, out_4, out_3, out_2) where out_2 is the finest-resolution map at outputs[-1].
+   - Compatible with PraNet Structure Loss (Weighted BCE + Weighted IoU).
 
-Key Innovations:
-1. DGAS Block (Dilated Gated Asymmetric Separable Block):
-   - Asymmetric factorized conv (3x1 + 1x3) from EDANet (33% param reduction vs 3x3)
-   - Depthwise Separable inner path for further efficiency
-   - Multi-scale dilated receptive field for polyps of all sizes
-   - Gated GELU activation (learnable adaptive feature selection, from MALUNet DGA)
-   - Squeeze-and-Excitation channel recalibration (from PID-UNet)
-
-2. InfoDown Downsampler (from PID-UNet):
-   - Dual-path: Strided Conv (learned) + MaxPool (sharp edges) → Concat
-   - Prevents information loss of diminutive polyps (<20px)
-
-3. LightBAG (Lightweight Boundary-Aware Guidance):
-   - Depthwise Separable version of PID-UNet's ResidualBAG
-   - Soft Saliency Gate from integral context (I)
-   - Boundary Attention Gate from D-branch
-   - Residual projection for unhindered gradient flow
-
-4. Semantic Boundary Branch (D-path):
-   - Multi-scale edge fusion from enc1, enc2, enc3
-   - Semantic filtering via bottleneck features (reduces false positives)
-
-Architecture:
-    Stem:  3→32  (stride 2, 352→176)
-    Enc1:  32→32  (DGAS, d=1,2)      + InfoDown 32→48  (176→88)
-    Enc2:  48→48  (DGAS, d=1,2,4)    + InfoDown 48→80  (88→44)
-    Enc3:  80→80  (DGAS, d=1,3,5)    + InfoDown 80→112 (44→22)
-    BN:   112→112 (DGAS, d=1,3,6,10)
-    Dec3:  LightBAG(enc3=80, ctx=112) → 80  (22→44)
-    Dec2:  LightBAG(enc2=48, ctx=80)  → 48  (44→88)
-    Dec1:  LightBAG(enc1=32, ctx=48)  → 32  (88→176)
-    Heads: 4× deep supervision (1ch)
-
-Parameters: ~0.72M (< 1M)
-Registered as: 'dganet'
-
-Cite:
-    If used in research, please cite this paper.
+Parameter Budget:
+   - base_c=44 -> ~0.745M parameters (strictly < 1.0M parameters, only ~3.0 MB weights file).
 """
 
 import torch
@@ -51,98 +32,108 @@ from models import register_model
 
 
 # ---------------------------------------------------------------------------
-# Utility: Squeeze-and-Excitation (SE)
+# Basic Building Blocks
 # ---------------------------------------------------------------------------
 
-class SE(nn.Module):
-    """Lightweight Squeeze-and-Excitation for channel recalibration."""
-    def __init__(self, channels: int, reduction: int = 8):
+class BasicConv(nn.Module):
+    """Standard Conv2d -> BatchNorm -> ReLU."""
+    def __init__(self, in_c: int, out_c: int, k: int = 3, s: int = 1, p: int = 1, d: int = 1):
         super().__init__()
-        mid = max(8, channels // reduction)
-        self.fc = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(channels, mid, 1, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(mid, channels, 1, bias=False),
-            nn.Sigmoid()
-        )
+        self.conv = nn.Conv2d(in_c, out_c, k, stride=s, padding=p, dilation=d, bias=False)
+        self.bn = nn.BatchNorm2d(out_c)
+        self.act = nn.ReLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x * self.fc(x)
+        return self.act(self.bn(self.conv(x)))
 
 
-# ---------------------------------------------------------------------------
-# Module 1: DGAS Block
-# Dilated Gated Asymmetric Separable Block
-# ---------------------------------------------------------------------------
-
-class _AsymDWBranch(nn.Module):
+class AsymConv(nn.Module):
     """
-    One dilated asymmetric-separable branch:
-      1x1 PW reduce → DW 3x1 → DW 1x3 → 1x1 PW expand
-    All with BatchNorm. Output has same spatial size as input.
+    Factorized 3x1 and 1x3 convolution with dilation.
+    Saves 33% parameters compared to standard 3x3 while doubling activation depth.
     """
-    def __init__(self, in_c: int, branch_c: int, dilation: int = 1):
+    def __init__(self, in_c: int, out_c: int, dilation: int = 1):
         super().__init__()
-        self.pw_in = nn.Sequential(
-            nn.Conv2d(in_c, branch_c, 1, bias=False),
-            nn.BatchNorm2d(branch_c),
-            nn.ReLU(inplace=True)
-        )
-        self.dw_v = nn.Sequential(
-            nn.Conv2d(branch_c, branch_c, (3, 1),
-                      padding=(dilation, 0), dilation=(dilation, 1),
-                      groups=branch_c, bias=False),
-            nn.BatchNorm2d(branch_c),
-        )
-        self.dw_h = nn.Sequential(
-            nn.Conv2d(branch_c, branch_c, (1, 3),
-                      padding=(0, dilation), dilation=(1, dilation),
-                      groups=branch_c, bias=False),
-            nn.BatchNorm2d(branch_c),
-        )
-        self.act = nn.GELU()
+        self.c1 = nn.Conv2d(in_c, out_c, (3, 1), padding=(dilation, 0), dilation=(dilation, 1), bias=False)
+        self.bn1 = nn.BatchNorm2d(out_c)
+        self.act1 = nn.ReLU(inplace=True)
+
+        self.c2 = nn.Conv2d(out_c, out_c, (1, 3), padding=(0, dilation), dilation=(1, dilation), bias=False)
+        self.bn2 = nn.BatchNorm2d(out_c)
+        self.act2 = nn.ReLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.pw_in(x)
-        x = self.dw_v(x)
-        x = self.dw_h(x)
-        return self.act(x)
+        return self.act2(self.bn2(self.c2(self.act1(self.bn1(self.c1(x))))))
 
 
-class DGASBlock(nn.Module):
+# ---------------------------------------------------------------------------
+# Module 1: Info-Preserving Downsampler (InfoDown)
+# ---------------------------------------------------------------------------
+
+class InfoDown(nn.Module):
     """
-    Dilated Gated Asymmetric Separable Block.
-
-    - Multi-scale dilated asymmetric-DW branches (parallel)
-    - Gated fusion: sigmoid gate on half channels * GELU on other half
-    - SE channel recalibration
-    - Residual connection
+    Prevents spatial loss of diminutive polyps during downsampling.
+    Combines learned strided convolution with localized max pooling.
     """
-    def __init__(self, in_c: int, out_c: int, dilations: tuple = (1, 2)):
+    def __init__(self, in_c: int, out_c: int):
         super().__init__()
-        n_branches = len(dilations)
-        branch_c = out_c // n_branches
+        c_conv = out_c // 2
+        c_pool = out_c - c_conv
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_c, c_conv, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(c_conv)
+        )
+        self.pool = nn.Sequential(
+            nn.MaxPool2d(2, stride=2),
+            nn.Conv2d(in_c, c_pool, 1, bias=False),
+            nn.BatchNorm2d(c_pool)
+        )
+        self.act = nn.ReLU(inplace=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.act(torch.cat([self.conv(x), self.pool(x)], dim=1))
+
+
+# ---------------------------------------------------------------------------
+# Module 2: Dilated Asymmetric RFB with Squeeze-and-Excitation
+# ---------------------------------------------------------------------------
+
+class DilatedAsymRFB(nn.Module):
+    """
+    Parallel dilated asymmetric factorized convolutions + Squeeze-and-Excitation.
+    Captures polyp scales spanning tiny diminutive to giant mucosal context.
+    """
+    def __init__(self, in_c: int, out_c: int, dilations: tuple = (1, 2, 4)):
+        super().__init__()
+        n = len(dilations)
+        bc = out_c // n
 
         self.branches = nn.ModuleList()
         for i, d in enumerate(dilations):
-            bc = out_c - branch_c * (n_branches - 1) if i == n_branches - 1 else branch_c
-            self.branches.append(_AsymDWBranch(in_c, bc, dilation=d))
+            c_out = out_c - bc * (n - 1) if i == n - 1 else bc
+            self.branches.append(nn.Sequential(
+                nn.Conv2d(in_c, c_out, 1, bias=False),
+                nn.BatchNorm2d(c_out),
+                nn.ReLU(inplace=True),
+                AsymConv(c_out, c_out, dilation=d)
+            ))
 
-        # Gated fusion: split concat into gate & value halves
-        self.gate_conv = nn.Sequential(
+        self.proj = nn.Sequential(
             nn.Conv2d(out_c, out_c, 1, bias=False),
             nn.BatchNorm2d(out_c),
-        )
-        self.value_conv = nn.Sequential(
-            nn.Conv2d(out_c, out_c, 1, bias=False),
-            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True)
         )
 
-        # SE recalibration
-        self.se = SE(out_c, reduction=8)
+        # Squeeze-and-Excitation channel recalibration
+        self.se = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(out_c, max(8, out_c // 8), 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(max(8, out_c // 8), out_c, 1, bias=False),
+            nn.Sigmoid()
+        )
 
-        # Shortcut
         self.shortcut = (
             nn.Sequential(
                 nn.Conv2d(in_c, out_c, 1, bias=False),
@@ -152,214 +143,150 @@ class DGASBlock(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         feats = torch.cat([b(x) for b in self.branches], dim=1)
-        gate = torch.sigmoid(self.gate_conv(feats))
-        value = F.gelu(self.value_conv(feats))
-        out = self.se(gate * value)
+        out = self.proj(feats)
+        out = out * self.se(out)
         return out + self.shortcut(x)
 
 
 # ---------------------------------------------------------------------------
-# Module 2: InfoDown Downsampler (from PID-UNet, keeps diminutive polyps)
+# Module 3: High-Level Partial Decoder (PPD)
 # ---------------------------------------------------------------------------
 
-class InfoDown(nn.Module):
+class PartialDecoder(nn.Module):
     """
-    Information-Preserving Downsampler.
-    Dual-path: Strided Conv (learned boundaries) + MaxPool (structural sharp edges).
+    Aggregates multi-scale high-level semantic features (e3: H/8, e4: H/16, e5: H/32).
+    Generates an initial global localization map (S_g).
     """
-    def __init__(self, in_c: int, out_c: int):
+    def __init__(self, c3: int, c4: int, c5: int, out_c: int = 64):
         super().__init__()
-        c_conv = out_c // 2
-        c_pool = out_c - c_conv
-        self.conv_path = nn.Sequential(
-            nn.Conv2d(in_c, c_conv, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(c_conv)
-        )
-        self.pool_path = nn.Sequential(
-            nn.MaxPool2d(2, stride=2),
-            nn.Conv2d(in_c, c_pool, 1, bias=False),
-            nn.BatchNorm2d(c_pool)
-        )
-        self.act = nn.ReLU(inplace=True)
+        self.p3 = nn.Sequential(nn.Conv2d(c3, out_c, 1, bias=False), nn.BatchNorm2d(out_c), nn.ReLU(inplace=True))
+        self.p4 = nn.Sequential(nn.Conv2d(c4, out_c, 1, bias=False), nn.BatchNorm2d(out_c), nn.ReLU(inplace=True))
+        self.p5 = nn.Sequential(nn.Conv2d(c5, out_c, 1, bias=False), nn.BatchNorm2d(out_c), nn.ReLU(inplace=True))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.act(torch.cat([self.conv_path(x), self.pool_path(x)], dim=1))
-
-
-# ---------------------------------------------------------------------------
-# Module 3: Semantic Boundary Branch (D-path)
-# ---------------------------------------------------------------------------
-
-class SemanticBoundaryBranch(nn.Module):
-    """
-    Semantic-guided boundary detection.
-    Fuses multi-scale encoder features with bottleneck semantic context
-    to produce a 1-channel boundary logit map.
-    Uses DW separable 1x1 projections for efficiency.
-    """
-    def __init__(self, c1: int, c2: int, c3: int, c_bn: int, d_c: int = 16):
-        super().__init__()
-        self.r1 = nn.Conv2d(c1, d_c, 1, bias=False)
-        self.r2 = nn.Conv2d(c2, d_c, 1, bias=False)
-        self.r3 = nn.Conv2d(c3, d_c, 1, bias=False)
-        self.r_sem = nn.Conv2d(c_bn, d_c, 1, bias=False)
-
-        # Lightweight fuse: DW separable 3x3 on 4*d_c channels
         self.fuse = nn.Sequential(
-            nn.Conv2d(d_c * 4, d_c * 4, 3, padding=1, groups=d_c * 4, bias=False),
-            nn.Conv2d(d_c * 4, d_c, 1, bias=False),
-            nn.BatchNorm2d(d_c),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(d_c, 1, 1)   # boundary logit
+            AsymConv(out_c * 3, out_c, dilation=1),
+            AsymConv(out_c, out_c, dilation=2)
         )
+        self.global_head = nn.Conv2d(out_c, 1, 1)
 
-    def forward(self, e1, e2, e3, bn):
-        target = e2.shape[2:]  # H/4, W/4
-        f1 = F.interpolate(self.r1(e1), size=target, mode='bilinear', align_corners=True)
-        f2 = self.r2(e2)
-        f3 = F.interpolate(self.r3(e3), size=target, mode='bilinear', align_corners=True)
-        f_sem = F.interpolate(self.r_sem(bn), size=target, mode='bilinear', align_corners=True)
-        return self.fuse(torch.cat([f1, f2, f3, f_sem], dim=1))
+    def forward(self, e3: torch.Tensor, e4: torch.Tensor, e5: torch.Tensor):
+        h, w = e3.shape[2:]
+        f3 = self.p3(e3)
+        f4 = F.interpolate(self.p4(e4), size=(h, w), mode='bilinear', align_corners=True)
+        f5 = F.interpolate(self.p5(e5), size=(h, w), mode='bilinear', align_corners=True)
+
+        fused = self.fuse(torch.cat([f3, f4, f5], dim=1))
+        sg = self.global_head(fused)
+        return fused, sg
 
 
 # ---------------------------------------------------------------------------
-# Module 4: LightBAG — Lightweight Boundary-Aware Guidance
+# Module 4: Boundary-Enhanced Reverse Attention (BERA)
 # ---------------------------------------------------------------------------
 
-class LightBAG(nn.Module):
+class BoundaryEnhancedReverseAttention(nn.Module):
     """
-    Lightweight Boundary-Aware Guidance Decoder Module.
-    A depthwise-separable, parameter-efficient version of PID-UNet's ResidualBAG.
-
-    Components:
-    - Soft Saliency Gate from I (integral/context features): suppresses background
-    - Boundary Attention from D (boundary map): sharpens polyp contours
-    - Residual projection for gradient flow
+    Boundary-Enhanced Reverse Attention Module:
+    1. Erases currently identified coarse polyp region: RA = 1 - sigmoid(prev_mask).
+    2. Forces feature representation to focus specifically on ambiguous polyp boundaries.
+    3. Fuses edge priors from shallow encoder layers to sharpen fine lesion contours.
     """
-    def __init__(self, p_c: int, i_c: int, out_c: int):
+    def __init__(self, in_c: int, edge_c: int, out_c: int):
         super().__init__()
-        # Project skip (P) and context (I)
-        self.proj_p = nn.Sequential(
-            nn.Conv2d(p_c, out_c, 1, bias=False),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU(inplace=True)
+        self.conv_in = BasicConv(in_c, out_c, k=3, p=1)
+        self.edge_proj = (
+            nn.Sequential(
+                nn.Conv2d(edge_c, out_c, 1, bias=False),
+                nn.BatchNorm2d(out_c),
+                nn.ReLU(inplace=True)
+            ) if edge_c > 0 else None
         )
-        self.proj_i = nn.Sequential(
-            nn.Conv2d(i_c, out_c, 1, bias=False),
-            nn.BatchNorm2d(out_c),
-            nn.ReLU(inplace=True)
+
+        fuse_in = out_c * 2 if edge_c > 0 else out_c
+        self.conv_refine = nn.Sequential(
+            AsymConv(fuse_in, out_c, dilation=1),
+            AsymConv(out_c, out_c, dilation=2)
         )
-        # Soft saliency gate from I
-        self.sal_gate = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(i_c, i_c // 4, 1, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(i_c // 4, out_c, 1, bias=False),
-            nn.Sigmoid()
-        )
-        # DW separable refinement
-        self.refine = nn.Sequential(
-            nn.Conv2d(out_c, out_c, 3, padding=1, groups=out_c, bias=False),
-            nn.Conv2d(out_c, out_c, 1, bias=False),
-            nn.BatchNorm2d(out_c),
-            nn.GELU()
-        )
-        self.se = SE(out_c)
+        self.head = nn.Conv2d(out_c, 1, 1)
 
-    def forward(self, p: torch.Tensor, i_feat: torch.Tensor,
-                boundary_map: torch.Tensor) -> torch.Tensor:
-        h, w = p.shape[2:]
-        if i_feat.shape[2:] != (h, w):
-            i_feat = F.interpolate(i_feat, (h, w), mode='bilinear', align_corners=True)
-        if boundary_map.shape[2:] != (h, w):
-            boundary_map = F.interpolate(boundary_map, (h, w), mode='bilinear', align_corners=True)
+    def forward(self, feat: torch.Tensor, prev_mask: torch.Tensor, edge_feat: torch.Tensor = None):
+        h, w = feat.shape[2:]
+        if prev_mask.shape[2:] != (h, w):
+            prev_mask_up = F.interpolate(prev_mask, size=(h, w), mode='bilinear', align_corners=True)
+        else:
+            prev_mask_up = prev_mask
 
-        p_proj = self.proj_p(p)
-        i_proj = self.proj_i(i_feat)
+        # Reverse attention erasing weight
+        ra_weight = 1.0 - torch.sigmoid(prev_mask_up)
+        x = feat * ra_weight
+        x = self.conv_in(x)
 
-        # Saliency gate from context (channel-wise)
-        sal = self.sal_gate(i_feat)             # (B, out_c, 1, 1)
-        p_gated = p_proj * (0.5 + 0.5 * sal)   # soft gate: preserve gradient
+        if self.edge_proj is not None and edge_feat is not None:
+            if edge_feat.shape[2:] != (h, w):
+                edge_feat = F.interpolate(edge_feat, size=(h, w), mode='bilinear', align_corners=True)
+            e_p = self.edge_proj(edge_feat)
+            x = torch.cat([x, e_p], dim=1)
 
-        # Boundary sharpening
-        edge = torch.sigmoid(boundary_map)      # (B, 1, H, W)
-        d_comp = edge * p_gated
-
-        fused = self.se(self.refine(p_gated + i_proj + d_comp))
-        return fused + i_proj   # residual to i_proj for gradient flow
+        x = self.conv_refine(x)
+        out_mask = self.head(x) + prev_mask_up
+        return x, out_mask
 
 
 # ---------------------------------------------------------------------------
-# Full Network: DGANet
+# Full Network: DGANet (v2 Flagship)
 # ---------------------------------------------------------------------------
 
 @register_model('dganet')
 class DGANet(nn.Module):
     """
-    DGANet: Dilated Gated Asymmetric Network for Lightweight Polyp Segmentation.
+    DGANet (v2 Flagship): Dilated Gated Asymmetric & Reverse Attention Network.
+    Parameters: ~0.745M (strictly < 1.0M parameters).
 
-    Parameters: ~0.72M  (<1M)
-    Input:  (B, 3, H, W) — recommended 352×352
-    Output: (out_d3, out_d2, out_d1, out_stem) — 4 logit maps at input resolution
-            (deep supervision; primary output = out_stem during inference)
-
-    Training: Use all 4 outputs with structure_loss + boundary aux loss.
-    Inference: Use out_stem (the finest-scale output).
+    Outputs: (out_5, out_4, out_3, out_2)
+    - out_5: Global semantic initial map (coarse, S_g)
+    - out_4: RA stage 4 map (S_4)
+    - out_3: RA stage 3 map (S_3)
+    - out_2: RA stage 2 map (S_2, finest resolution prediction at outputs[-1])
     """
 
-    def __init__(self, in_channels: int = 3, n_classes: int = 1,
-                 base_c: int = 64):
-        """
-        Args:
-            base_c: Base channel width. Controls model capacity:
-                base_c=36 → ~0.20M (ultra-light)
-                base_c=48 → ~0.42M (light)
-                base_c=64 → ~0.74M (default, balanced) ← recommended
-                base_c=72 → ~0.93M (max under 1M)
-        """
+    def __init__(self, in_channels: int = 3, n_classes: int = 1, base_c: int = 44):
         super().__init__()
+        c1 = base_c            # 44
+        c2 = int(base_c * 1.5) # 66
+        c3 = base_c * 2        # 88
+        c4 = base_c * 3        # 132
+        c5 = base_c * 4        # 176
 
-        # Channel config — scaled from base_c
-        c1  = base_c           # e.g. 64
-        c2  = int(base_c * 1.5)  # e.g. 96
-        c3  = base_c * 2       # e.g. 128
-        cbn = int(base_c * 2.5)  # e.g. 160
-
-        # --- Stem: fast initial downsampling ---
+        # --- Stem & Multi-scale Encoder ---
         self.stem = nn.Sequential(
             nn.Conv2d(in_channels, c1, 3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(c1),
-            nn.GELU()
-        )   # (B, 32, H/2, W/2)
+            nn.ReLU(inplace=True)
+        )
+        self.enc1 = DilatedAsymRFB(c1, c1, dilations=(1, 2))
+        self.down1 = InfoDown(c1, c2)  # 176 -> 88 (H/4)
 
-        # --- Encoder ---
-        self.enc1 = DGASBlock(c1, c1, dilations=(1, 2))
-        self.down1 = InfoDown(c1, c2)              # (B, 48, H/4, W/4)
+        self.enc2 = DilatedAsymRFB(c2, c2, dilations=(1, 2, 4))
+        self.down2 = InfoDown(c2, c3)  # 88 -> 44 (H/8)
 
-        self.enc2 = DGASBlock(c2, c2, dilations=(1, 2, 4))
-        self.down2 = InfoDown(c2, c3)              # (B, 80, H/8, W/8)
+        self.enc3 = DilatedAsymRFB(c3, c3, dilations=(1, 2, 4))
+        self.down3 = InfoDown(c3, c4)  # 44 -> 22 (H/16)
 
-        self.enc3 = DGASBlock(c3, c3, dilations=(1, 3, 5))
-        self.down3 = InfoDown(c3, cbn)             # (B, 112, H/16, W/16)
+        self.enc4 = DilatedAsymRFB(c4, c4, dilations=(1, 3, 6))
+        self.down4 = InfoDown(c4, c5)  # 22 -> 11 (H/32)
 
-        # --- Bottleneck (Integral context, wide receptive field) ---
-        self.bottleneck = DGASBlock(cbn, cbn, dilations=(1, 3, 6, 10))
+        self.bottleneck = DilatedAsymRFB(c5, c5, dilations=(1, 3, 6, 12))
 
-        # --- Derivative Boundary Branch ---
-        self.boundary = SemanticBoundaryBranch(c1, c2, c3, cbn, d_c=16)
+        # --- Low-level Edge Guidance Extractor (from enc1) ---
+        self.edge_extractor = BasicConv(c1, 24, k=3, p=1)
 
-        # --- Decoder with LightBAG ---
-        self.dec3 = LightBAG(p_c=c3, i_c=cbn, out_c=c3)
-        self.dec2 = LightBAG(p_c=c2, i_c=c3, out_c=c2)
-        self.dec1 = LightBAG(p_c=c1, i_c=c2, out_c=c1)
+        # --- High-level Partial Decoder (PPD) ---
+        self.pd = PartialDecoder(c3, c4, c5, out_c=64)
 
-        # --- Deep Supervision Heads ---
-        self.head3 = nn.Conv2d(c3, n_classes, 1)   # coarsest
-        self.head2 = nn.Conv2d(c2, n_classes, 1)
-        self.head1 = nn.Conv2d(c1, n_classes, 1)   # finest
-
-        # --- Boundary auxiliary head (for training only) ---
-        self.head_boundary = nn.Identity()          # boundary already 1ch
+        # --- Boundary-Enhanced Reverse Attention Decoders ---
+        self.ra4 = BoundaryEnhancedReverseAttention(in_c=c4, edge_c=0, out_c=48)
+        self.ra3 = BoundaryEnhancedReverseAttention(in_c=c3, edge_c=0, out_c=36)
+        self.ra2 = BoundaryEnhancedReverseAttention(in_c=c2, edge_c=24, out_c=28)
 
         self._init_weights()
 
@@ -374,32 +301,33 @@ class DGANet(nn.Module):
                 nn.init.zeros_(m.bias)
 
     def forward(self, x: torch.Tensor):
-        orig_size = x.shape[2:]
+        orig_sz = x.shape[2:]
 
-        # 1. Encoder
-        s = self.stem(x)                    # (B, 32, H/2, W/2)
-        e1 = self.enc1(s)                   # (B, 32, H/2, W/2)
-        e2 = self.enc2(self.down1(e1))      # (B, 48, H/4, W/4)
-        e3 = self.enc3(self.down2(e2))      # (B, 80, H/8, W/8)
+        # 1. Multi-scale Encoder
+        s = self.stem(x)               # (B, 44, H/2)
+        e1 = self.enc1(s)              # (B, 44, H/2)
+        e2 = self.enc2(self.down1(e1)) # (B, 66, H/4)
+        e3 = self.enc3(self.down2(e2)) # (B, 88, H/8)
+        e4 = self.enc4(self.down3(e3)) # (B, 132, H/16)
+        e5 = self.bottleneck(self.down4(e4)) # (B, 176, H/32)
 
-        # 2. Bottleneck (Integral context)
-        bn = self.bottleneck(self.down3(e3))  # (B, 112, H/16, W/16)
+        # 2. Extract edge cues from high-res feature
+        edge_feat = self.edge_extractor(e1)
 
-        # 3. Derivative Boundary Branch
-        b_map = self.boundary(e1, e2, e3, bn)  # (B, 1, H/4, W/4)
+        # 3. High-level Partial Decoder (Coarse Global Map S_g)
+        _, sg = self.pd(e3, e4, e5)   # (B, 1, H/8)
 
-        # 4. Decoder
-        d3 = self.dec3(e3, bn, b_map)       # (B, 80, H/8, W/8)
-        d2 = self.dec2(e2, d3, b_map)       # (B, 48, H/4, W/4)
-        d1 = self.dec1(e1, d2, b_map)       # (B, 32, H/2, W/2)
+        # 4. Progressive Reverse Attention Cascade
+        _, s4 = self.ra4(e4, sg)              # (B, 1, H/16)
+        _, s3 = self.ra3(e3, s4)              # (B, 1, H/8)
+        _, s2 = self.ra2(e2, s3, edge_feat)   # (B, 1, H/4) finest
 
-        # 5. Deep supervision (upsample all to input resolution)
-        out3 = F.interpolate(self.head3(d3), orig_size, mode='bilinear', align_corners=True)
-        out2 = F.interpolate(self.head2(d2), orig_size, mode='bilinear', align_corners=True)
-        out1 = F.interpolate(self.head1(d1), orig_size, mode='bilinear', align_corners=True)
-        # Boundary map auxiliary output
-        b_up = F.interpolate(b_map, orig_size, mode='bilinear', align_corners=True)
+        # 5. Deep Supervision maps (all interpolated to input resolution)
+        out_5 = F.interpolate(sg, size=orig_sz, mode='bilinear', align_corners=False) # Coarse global
+        out_4 = F.interpolate(s4, size=orig_sz, mode='bilinear', align_corners=False)
+        out_3 = F.interpolate(s3, size=orig_sz, mode='bilinear', align_corners=False)
+        out_2 = F.interpolate(s2, size=orig_sz, mode='bilinear', align_corners=False) # Finest prediction
 
-        # Standard PraNet order: coarse -> fine.
-        # Index [-1] MUST be the finest segmentation output (out1) for evaluator & test scripts!
-        return b_up, out3, out2, out1
+        # PraNet standard: return (coarse -> fine)
+        # outputs[-1] is out_2 (primary prediction evaluated during test & validation)
+        return out_5, out_4, out_3, out_2
