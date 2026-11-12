@@ -128,7 +128,7 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
     val_ids, train_ids = indices[:nval], indices[nval:]
     train_ds = train_loader.dataset
     val_ds = PolypDataset(train_img_dir, train_gt_dir, args.trainsize, is_train=False)
-    if args.model == 'pid_unet_v2':
+    if args.model in {'pid_unet_v2', 'pid_unet_v3'}:
         train_ds.aug.copypaste_prob = 0
     train_loader = DataLoader(Subset(train_ds, train_ids), batch_size=args.batchsize,
                               shuffle=True, num_workers=num_workers, pin_memory=True)
@@ -146,7 +146,7 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
     loss_fn = get_loss(args.loss)
 
     # Per-paper optimizer dispatch
-    _ADAMW_MODELS = {'polyp_pvt', 'pid_unet_v2'}
+    _ADAMW_MODELS = {'polyp_pvt', 'pid_unet_v2', 'pid_unet_v3'}
     if args.model.lower() in _ADAMW_MODELS:
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         opt_name = f"AdamW (weight_decay={args.weight_decay})"
@@ -255,8 +255,8 @@ def main():
     args.amp = not args.no_amp
 
     # Enforce Fixed PraNet Hyperparameters
-    args.lr = args.lr if args.lr is not None else (3e-4 if args.model == 'pid_unet_v2' else 1e-4)
-    args.scheduler = args.scheduler or ('cosine' if args.model == 'pid_unet_v2' else 'step')
+    args.lr = args.lr if args.lr is not None else (3e-4 if args.model in {'pid_unet_v2', 'pid_unet_v3'} else 1e-4)
+    args.scheduler = args.scheduler or ('cosine' if args.model in {'pid_unet_v2', 'pid_unet_v3'} else 'step')
     args.trainsize = 352
     args.clip = 0.5
     args.decay_rate = 0.1

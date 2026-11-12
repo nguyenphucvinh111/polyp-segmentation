@@ -36,3 +36,20 @@ Current wFb/Sm/Em implementations still require reference validation before
 publication. Validation uses resized masks; final benchmark uses original
 resolution, so the two scores are not directly interchangeable. No dataset or
 trained checkpoints were available during local implementation.
+
+## v3: uncertainty-guided residual detail refinement
+
+v3 adds a small RGB detail branch conditioned on coarse probability,
+uncertainty and supervised boundary probability. Its signed residual can add
+or remove foreground; attention has a 0.25 floor. Training settings match v2
+for a direct architecture comparison. Original v2 behavior is unchanged.
+
+```bash
+python train.py --model pid_unet_v3 --loss structure_loss --epochs 100 --batchsize 8 --seed 42
+```
+
+Use a separate Colab GPU runtime for concurrent v2/v3 runs. Running both on
+one T4 competes for VRAM and compute. Outputs use separate model directories.
+Do not reuse a v2 checkpoint with --resume for v3. The Python constructor
+supports refinement=False for ablation. v3 has not yet been trained on real
+data; compare validation before choosing it, then evaluate the locked model.
