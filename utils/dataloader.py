@@ -56,7 +56,7 @@ class PolypDataset(Dataset):
         self.img_transform = transforms.Compose(img_tf_list)
 
         self.gt_transform = transforms.Compose([
-            transforms.Resize((self.trainsize, self.trainsize)),
+            transforms.Resize((self.trainsize, self.trainsize), interpolation=transforms.InterpolationMode.NEAREST),
             transforms.ToTensor()
         ])
 
@@ -73,7 +73,7 @@ class PolypDataset(Dataset):
             image, gt = self.aug(image, gt)
 
         image = self.img_transform(image)
-        gt = self.gt_transform(gt)
+        gt = (self.gt_transform(gt) > .5).float()
 
         return image, gt
 

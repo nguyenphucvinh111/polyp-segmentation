@@ -374,7 +374,7 @@ class EnhancedTinyPIDUNet(nn.Module):
         self.head2 = nn.Conv2d(c2, n_classes, kernel_size=1)
         self.head1 = nn.Conv2d(c1, n_classes, kernel_size=1)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, return_aux=False):
         sz = x.shape[2:]
 
         # 1. Multi-scale asymmetric encoder forward
@@ -402,4 +402,4 @@ class EnhancedTinyPIDUNet(nn.Module):
         out2 = F.interpolate(self.head2(d2), size=sz, mode='bilinear', align_corners=True)
         out1 = self.head1(d1)  # already (H, W)
 
-        return out4, out3, out2, out1
+        return ((out4, out3, out2, out1), b_map) if return_aux else (out4, out3, out2, out1)

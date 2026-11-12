@@ -14,7 +14,7 @@ Hyperparameter settings reproducing each paper exactly:
     Epochs: 100  (PraNet paper: 20; Polyp-PVT Table II: 100; we default 100)
     Initial Learning Rate: 1e-4
     Optimizer: Adam for PraNet/SANet/HarDNet-MSEG/UNet variants
-               AdamW (weight_decay=1e-4) for Polyp-PVT  [Table II]
+               AdamW (weight_decay=args.weight_decay) for Polyp-PVT  [Table II]
     Batch Size: 16
     Input Resolution: 352x352 (with multi-scale [0.75, 1.0, 1.25] per batch)
     Gradient Clipping: 0.5
@@ -116,14 +116,28 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
         num_workers=num_workers,
         is_train=True
     )
-    val_loader = get_loader(
-        val_img_dir, val_gt_dir,
-        batchsize=args.batchsize,
-        trainsize=args.trainsize,
-        shuffle=False,
-        num_workers=num_workers,
-        is_train=False
-    )
+    # Hold out training images; never select epochs on a test dataset.
+    import json
+    from torch.utils.data import Subset, DataLoader
+    from utils.dataloader import PolypDataset
+    count = len(train_loader.dataset)
+    if count < 2:
+        raise ValueError("At least two training pairs are required")
+    indices = np.random.default_rng(42).permutation(count).tolist()
+    nval = max(1, round(count * .1))
+    val_ids, train_ids = indices[:nval], indices[nval:]
+    train_ds = train_loader.dataset
+    val_ds = PolypDataset(train_img_dir, train_gt_dir, args.trainsize, is_train=False)
+    if args.model == 'pid_unet_v2':
+        train_ds.aug.copypaste_prob = 0
+    train_loader = DataLoader(Subset(train_ds, train_ids), batch_size=args.batchsize,
+                              shuffle=True, num_workers=num_workers, pin_memory=True)
+    val_loader = DataLoader(Subset(val_ds, val_ids), batch_size=args.batchsize,
+                            shuffle=False, num_workers=num_workers)
+    os.makedirs('./logs', exist_ok=True)
+    with open(f'./logs/{tag}_config.json', 'w', encoding='utf-8') as handle:
+        json.dump({'config': vars(args), 'train': [train_ds.images[i] for i in train_ids],
+                   'validation': [val_ds.images[i] for i in val_ids]}, handle, indent=2)
     print(f"[Data] Training pairs: {len(train_loader.dataset)} | Validation pairs: {len(val_loader.dataset)}")
 
     # 3. Build Model & Loss
@@ -132,10 +146,10 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
     loss_fn = get_loss(args.loss)
 
     # Per-paper optimizer dispatch
-    _ADAMW_MODELS = {'polyp_pvt'}
+    _ADAMW_MODELS = {'polyp_pvt', 'pid_unet_v2'}
     if args.model.lower() in _ADAMW_MODELS:
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-        opt_name = "AdamW (weight_decay=1e-4)"
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        opt_name = f"AdamW (weight_decay={args.weight_decay})"
     else:
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
         opt_name = "Adam"
@@ -211,6 +225,11 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Train Polyp Segmentation Network")
+    parser.add_argument('--lr', type=float, default=None)
+    parser.add_argument('--weight_decay', type=float, default=1e-4)
+    parser.add_argument('--scheduler', choices=['step', 'cosine'], default=None)
+    parser.add_argument('--warmup_epochs', type=int, default=5)
+    parser.add_argument('--boundary_weight', type=float, default=0.2)
     parser.add_argument('--model', type=str, default='pranet', help=f'Model name. Available: {list_models()}')
     parser.add_argument('--loss', type=str, default='structure_loss', help=f'Loss name. Available: {list_losses()}')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for single run (default: 42)')
@@ -236,7 +255,8 @@ def main():
     args.amp = not args.no_amp
 
     # Enforce Fixed PraNet Hyperparameters
-    args.lr = 1e-4
+    args.lr = args.lr if args.lr is not None else (3e-4 if args.model == 'pid_unet_v2' else 1e-4)
+    args.scheduler = args.scheduler or ('cosine' if args.model == 'pid_unet_v2' else 'step')
     args.trainsize = 352
     args.clip = 0.5
     args.decay_rate = 0.1

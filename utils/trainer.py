@@ -76,7 +76,18 @@ class Trainer:
 
     def train_one_epoch(self, train_loader, epoch: int) -> dict:
         self.model.train()
-        adjust_lr(self.optimizer, self.cfg.lr, epoch, self.cfg.decay_rate, self.cfg.decay_epoch)
+        if getattr(self.cfg, 'scheduler', 'step') == 'cosine':
+            import math
+            warmup = self.cfg.warmup_epochs
+            if epoch <= warmup:
+                factor = epoch / max(1, warmup)
+            else:
+                progress = (epoch - warmup) / max(1, self.cfg.epochs - warmup)
+                factor = .01 + .99 * .5 * (1 + math.cos(math.pi * progress))
+            for group in self.optimizer.param_groups:
+                group['lr'] = self.cfg.lr * factor
+        else:
+            adjust_lr(self.optimizer, self.cfg.lr, epoch, self.cfg.decay_rate, self.cfg.decay_epoch)
         current_lr = self.optimizer.param_groups[0]['lr']
 
         # Multi-scale strategy:
@@ -114,13 +125,16 @@ class Trainer:
 
                 if rate != 1.0:
                     scaled_images = F.interpolate(images, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
-                    scaled_gts = F.interpolate(gts, size=(trainsize, trainsize), mode='bilinear', align_corners=True)
+                    scaled_gts = F.interpolate(gts, size=(trainsize, trainsize), mode='nearest')
                 else:
                     scaled_images = images
                     scaled_gts = gts
 
                 with torch.cuda.amp.autocast(enabled=self.use_amp):
-                    outputs = self.model(scaled_images)
+                    if self.cfg.model == 'pid_unet_v2':
+                        outputs, boundary = self.model(scaled_images, return_aux=True)
+                    else:
+                        outputs = self.model(scaled_images)
 
                     if isinstance(outputs, (tuple, list)) and len(outputs) == 4:
                         lat5, lat4, lat3, lat2 = outputs
@@ -133,6 +147,16 @@ class Trainer:
                         loss = sum(self.loss_fn(out, scaled_gts) for out in outputs)
                     else:
                         loss = self.loss_fn(outputs, scaled_gts)
+
+                if self.cfg.model == 'pid_unet_v2':
+                    target = (scaled_gts > .5).float()
+                    edge = F.max_pool2d(target, 3, 1, 1) + F.max_pool2d(-target, 3, 1, 1)
+                    boundary = F.interpolate(boundary.float(), size=target.shape[-2:], mode='bilinear', align_corners=False)
+                    weight = ((edge.numel() - edge.sum()) / edge.sum().clamp_min(1)).clamp(1, 100)
+                    bce = F.binary_cross_entropy_with_logits(boundary, edge, pos_weight=weight)
+                    prob = boundary.sigmoid()
+                    dice = 1 - (2*(prob*edge).sum((2,3))+1)/(prob.sum((2,3))+edge.sum((2,3))+1)
+                    loss = loss + self.cfg.boundary_weight * (bce + dice.mean())
 
                 if self.use_amp:
                     self.scaler.scale(loss).backward()
@@ -183,6 +207,7 @@ class Trainer:
                 gts_np = gts.squeeze(1).cpu().numpy()
 
                 for b in range(pred.shape[0]):
-                    evaluator.metrics.update(pred[b], gts_np[b])
+                    normalized = (pred[b] - pred[b].min()) / (pred[b].max() - pred[b].min() + 1e-8)
+                    evaluator.metrics.update(normalized, gts_np[b])
 
         return evaluator.metrics.get_results()
