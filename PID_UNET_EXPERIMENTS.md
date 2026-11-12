@@ -53,3 +53,23 @@ one T4 competes for VRAM and compute. Outputs use separate model directories.
 Do not reuse a v2 checkpoint with --resume for v3. The Python constructor
 supports refinement=False for ablation. v3 has not yet been trained on real
 data; compare validation before choosing it, then evaluate the locked model.
+
+## v4: decoder feature context refinement
+
+The v3 run improved CVC-300 (0.8370 versus v2 0.8294), but its ETIS
+Dice fell to 0.5202. v4 returns to v2 and adds local/dilated decoder-feature
+refinement instead of direct RGB refinement. A signed tanh correction is
+bounded to one logit and initialized to zero. This is a hypothesis about
+foreground/background discrimination, not a demonstrated improvement.
+Training and validation match v2. No test-set threshold tuning is used.
+
+```bash
+python train.py --model pid_unet_v4 --loss structure_loss --epochs 100 --batchsize 8 --seed 42
+```
+
+Train from scratch; do not resume a v2/v3 checkpoint as v4. Select checkpoint
+on held-out validation and report all five test sets once configuration is
+locked. Target CVC-300 Dice >0.848 is a reference to the supplied EDANet table;
+matching its protocol remains necessary. Archive prior runs and compare three
+seeds before making a paper claim. Raw per-image masks are needed to determine
+whether excess predictions or missed lesions explain CVC-300 errors.
