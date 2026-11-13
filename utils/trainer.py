@@ -131,7 +131,7 @@ class Trainer:
                     scaled_gts = gts
 
                 with torch.cuda.amp.autocast(enabled=self.use_amp):
-                    if self.cfg.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4', 'pid_unet_v5'}:
+                    if self.cfg.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4', 'pid_unet_v5', 'pid_unet_v6'}:
                         outputs, boundary = self.model(scaled_images, return_aux=True)
                     else:
                         outputs = self.model(scaled_images)
@@ -148,7 +148,7 @@ class Trainer:
                     else:
                         loss = self.loss_fn(outputs, scaled_gts)
 
-                if self.cfg.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4', 'pid_unet_v5'}:
+                if self.cfg.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4', 'pid_unet_v5', 'pid_unet_v6'}:
                     target = (scaled_gts > .5).float()
                     edge = F.max_pool2d(target, 3, 1, 1) + F.max_pool2d(-target, 3, 1, 1)
                     boundary = F.interpolate(boundary.float(), size=target.shape[-2:], mode='bilinear', align_corners=False)

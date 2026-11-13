@@ -112,3 +112,23 @@ for ablation. Keep validation checkpoint selection unchanged; do not tune
 thresholds or select epochs against CVC-300. Report all five test sets and
 multiple seeds. Baseline v2 CVC-300 Dice 0.8294; EDANet PDF reference 0.848.
 The earlier optional structure_precision experiment is not part of v5.
+
+## v6: independent channel-fusion architecture ablation
+
+v6 starts from v2, not v5. Each decoder block concatenates weighted P/I/D
+features and learns a 1x1 channel projection before the existing SE/refinement.
+The projection starts as three identity matrices, reproducing v2 addition
+at initialization. This retains branch identity for learned fusion rather
+than irrevocably summing channels. The new interaction may improve foreground
+and background discrimination, but superiority over EDANet is unverified.
+All losses (structure_loss plus existing boundary supervision), data and
+training settings match v2/v5; no CVC-300 threshold tuning is introduced.
+
+```bash
+python train.py --model pid_unet_v6 --loss structure_loss --epochs 100 --batchsize 8 --seed 42
+```
+
+Use a separate GPU runtime for concurrent runs. Train from scratch; outputs
+use pid_unet_v6. Compare validation and report all datasets and multiple seeds.
+Parameter budget remains below 1M; measure latency rather than assuming it
+matches v2. v2 and v5 source and checkpoints are unchanged.
