@@ -91,3 +91,24 @@ Train from scratch. Outputs go to snapshots/pid_unet_v2_precision,
 logs/pid_unet_v2_precision and results/pid_unet_v2_precision; original v2
 checkpoint and model code are preserved. --run_name also prefixes seed tags
 for multi-seed runs. This is a training ablation, not a new architecture.
+
+## v5: architecture-only spatial PID experiment
+
+Uses structure_loss and the SAME boundary supervision weight, optimizer,
+scheduler, augmentation and resolution as v2. No precision loss is used.
+v2 model code and checkpoints remain unchanged. v5 replaces global-only PID
+gains by global priors plus bounded spatial corrections at each decoder scale.
+Corrections start at zero, retaining the initialized global gains. A spatial
+allocation can weight detail/context/edges differently in foreground and
+background; whether this improves CVC-300 is an untested hypothesis.
+
+```bash
+python train.py --model pid_unet_v5 --loss structure_loss --epochs 100 --batchsize 8 --seed 42
+```
+
+Train from scratch, not --resume from another architecture. All outputs use
+pid_unet_v5 directories. Python spatial_pid=False disables the new controller
+for ablation. Keep validation checkpoint selection unchanged; do not tune
+thresholds or select epochs against CVC-300. Report all five test sets and
+multiple seeds. Baseline v2 CVC-300 Dice 0.8294; EDANet PDF reference 0.848.
+The earlier optional structure_precision experiment is not part of v5.
