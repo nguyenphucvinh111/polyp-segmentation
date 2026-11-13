@@ -225,6 +225,7 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Train Polyp Segmentation Network")
+    parser.add_argument('--run_name', type=str, default=None, help='Separate experiment output directory name')
     parser.add_argument('--lr', type=float, default=None)
     parser.add_argument('--weight_decay', type=float, default=1e-4)
     parser.add_argument('--scheduler', choices=['step', 'cosine'], default=None)
@@ -254,6 +255,9 @@ def main():
     args = parser.parse_args()
     args.amp = not args.no_amp
 
+    if args.run_name and (args.run_name in {'.', '..'} or any(c in args.run_name for c in '/\\')):
+        parser.error('--run_name must be a directory name, not a path')
+
     # Enforce Fixed PraNet Hyperparameters
     args.lr = args.lr if args.lr is not None else (3e-4 if args.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4'} else 1e-4)
     args.scheduler = args.scheduler or ('cosine' if args.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4'} else 'step')
@@ -268,7 +272,7 @@ def main():
         # Standard Single Seed Run
         seed = seeds[0]
         args.seed = seed
-        train_single_run(args, seed, run_name=args.model)
+        train_single_run(args, seed, run_name=args.run_name or args.model)
     else:
         # Multi-seed Benchmark Run
         print(f"\n============================================================")
@@ -277,7 +281,7 @@ def main():
         for idx, seed in enumerate(seeds, 1):
             print(f"\n>>> [Multi-Seed {idx}/{len(seeds)}] Starting Run for Seed: {seed} <<<")
             args.seed = seed
-            run_name = f"{args.model}_seed{seed}"
+            run_name = f"{args.run_name or args.model}_seed{seed}"
             train_single_run(args, seed, run_name=run_name)
         print(f"\n[Done] Multi-seed evaluation completed for all seeds: {seeds}.")
 

@@ -73,3 +73,21 @@ locked. Target CVC-300 Dice >0.848 is a reference to the supplied EDANet table;
 matching its protocol remains necessary. Archive prior runs and compare three
 seeds before making a paper claim. Raw per-image masks are needed to determine
 whether excess predictions or missed lesions explain CVC-300 errors.
+
+## Preserve v2: precision-oriented loss experiment
+
+Keep architecture, augmentation, boundary supervision, scheduler and resolution
+identical to v2. Only the segmentation objective changes: original structure
+loss plus 0.3 * Tversky loss (FP weight 0.6, FN weight 0.4). These constants
+are a fixed hypothesis, not selected on CVC-300 test scores. Parameter count
+and inference cost are unchanged. There is no guarantee of improvement;
+recall may fall. Select on the existing validation split and report all sets.
+
+```bash
+python train.py --model pid_unet_v2 --loss structure_precision --run_name pid_unet_v2_precision --epochs 100 --batchsize 8 --seed 42
+```
+
+Train from scratch. Outputs go to snapshots/pid_unet_v2_precision,
+logs/pid_unet_v2_precision and results/pid_unet_v2_precision; original v2
+checkpoint and model code are preserved. --run_name also prefixes seed tags
+for multi-seed runs. This is a training ablation, not a new architecture.
