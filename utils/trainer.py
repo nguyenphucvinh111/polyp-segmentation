@@ -15,6 +15,7 @@ from datetime import datetime
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+from models._pid_family import PID_V2_MODELS
 
 
 def clip_gradient(optimizer, grad_clip: float = 0.5):
@@ -131,7 +132,7 @@ class Trainer:
                     scaled_gts = gts
 
                 with torch.cuda.amp.autocast(enabled=self.use_amp):
-                    if self.cfg.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4', 'pid_unet_v5', 'pid_unet_v6'}:
+                    if self.cfg.model in PID_V2_MODELS:
                         outputs, boundary = self.model(scaled_images, return_aux=True)
                     else:
                         outputs = self.model(scaled_images)
@@ -148,7 +149,7 @@ class Trainer:
                     else:
                         loss = self.loss_fn(outputs, scaled_gts)
 
-                if self.cfg.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4', 'pid_unet_v5', 'pid_unet_v6'}:
+                if self.cfg.model in PID_V2_MODELS:
                     target = (scaled_gts > .5).float()
                     edge = F.max_pool2d(target, 3, 1, 1) + F.max_pool2d(-target, 3, 1, 1)
                     boundary = F.interpolate(boundary.float(), size=target.shape[-2:], mode='bilinear', align_corners=False)

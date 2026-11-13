@@ -1,0 +1,12 @@
+{
+  "source": "User-supplied LIDP_2026.pdf, tables 1-5; values rounded to 3 decimals",
+  "protocol": "Not independently verified; compare only with matching data and metric definitions",
+  "directions": {"mDice": "higher", "mIoU": "higher", "Sm": "higher", "Em": "higher", "MAE": "lower"},
+  "datasets": {
+    "CVC-300": {"mDice": 0.848, "mIoU": 0.758, "Sm": 0.878, "Em": 0.922, "MAE": 0.014},
+    "CVC-ClinicDB": {"mDice": 0.815, "mIoU": 0.736, "Sm": 0.852, "Em": 0.899, "MAE": 0.031},
+    "CVC-ColonDB": {"mDice": 0.719, "mIoU": 0.625, "Sm": 0.759, "Em": 0.829, "MAE": 0.049},
+    "ETIS-LaribPolypDB": {"mDice": 0.557, "mIoU": 0.463, "Sm": 0.603, "Em": 0.719, "MAE": 0.053},
+    "Kvasir": {"mDice": 0.875, "mIoU": 0.802, "Sm": 0.900, "Em": 0.917, "MAE": 0.045}
+  }
+}

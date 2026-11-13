@@ -40,6 +40,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from models import get_model, list_models
+from models._pid_family import PID_V2_MODELS
 from loss import get_loss, list_losses
 from utils.setup_dataset import setup_dataset
 from utils.dataloader import get_loader
@@ -128,7 +129,7 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
     val_ids, train_ids = indices[:nval], indices[nval:]
     train_ds = train_loader.dataset
     val_ds = PolypDataset(train_img_dir, train_gt_dir, args.trainsize, is_train=False)
-    if args.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4', 'pid_unet_v5', 'pid_unet_v6'}:
+    if args.model in PID_V2_MODELS:
         train_ds.aug.copypaste_prob = 0
     train_loader = DataLoader(Subset(train_ds, train_ids), batch_size=args.batchsize,
                               shuffle=True, num_workers=num_workers, pin_memory=True)
@@ -146,7 +147,7 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
     loss_fn = get_loss(args.loss)
 
     # Per-paper optimizer dispatch
-    _ADAMW_MODELS = {'polyp_pvt', 'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4', 'pid_unet_v5', 'pid_unet_v6'}
+    _ADAMW_MODELS = PID_V2_MODELS | {'polyp_pvt'}
     if args.model.lower() in _ADAMW_MODELS:
         optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         opt_name = f"AdamW (weight_decay={args.weight_decay})"
@@ -259,8 +260,8 @@ def main():
         parser.error('--run_name must be a directory name, not a path')
 
     # Enforce Fixed PraNet Hyperparameters
-    args.lr = args.lr if args.lr is not None else (3e-4 if args.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4', 'pid_unet_v5', 'pid_unet_v6'} else 1e-4)
-    args.scheduler = args.scheduler or ('cosine' if args.model in {'pid_unet_v2', 'pid_unet_v3', 'pid_unet_v4', 'pid_unet_v5', 'pid_unet_v6'} else 'step')
+    args.lr = args.lr if args.lr is not None else (3e-4 if args.model in PID_V2_MODELS else 1e-4)
+    args.scheduler = args.scheduler or ('cosine' if args.model in PID_V2_MODELS else 'step')
     args.trainsize = 352
     args.clip = 0.5
     args.decay_rate = 0.1

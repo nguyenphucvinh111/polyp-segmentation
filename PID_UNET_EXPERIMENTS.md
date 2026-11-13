@@ -1,5 +1,9 @@
 # PID-UNet v2 experiments
 
+Current architecture experiment: [PID-UNet v2 Plus](PID_UNET_V2_PLUS.md), based
+directly on v2 with the same loss and training settings. Earlier variants below
+are retained for comparison; their names and checkpoints are unchanged.
+
 This is an experimental architecture, not a demonstrated accuracy improvement.
 835,373 parameters; no pretrained backbone. Output remains four logits; optional
 `return_aux=True` returns `(segmentation_logits, boundary_logits)`.

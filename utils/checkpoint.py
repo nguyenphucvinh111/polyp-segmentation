@@ -78,6 +78,13 @@ class Checkpointer:
         missing = set(model_sd.keys()) - set(matched_sd.keys())
         unexpected = set(clean_sd.keys()) - set(model_sd.keys())
 
+        if getattr(model, 'strict_checkpoint_loading', False) and (missing or unexpected):
+            raise ValueError(
+                f"Checkpoint does not match {model.__class__.__name__}: "
+                f"{len(missing)} missing/mismatched keys, {len(unexpected)} unexpected keys. "
+                "Use a checkpoint from the same architecture. Train a new model without --resume."
+            )
+
         model.load_state_dict(matched_sd, strict=False)
         print(f"[Checkpointer] Loaded {len(matched_sd)}/{len(model_sd)} layers from '{path}'.")
         if missing:
