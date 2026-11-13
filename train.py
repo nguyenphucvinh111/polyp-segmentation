@@ -48,6 +48,7 @@ from utils.trainer import Trainer
 from utils.logger import Logger
 from utils.checkpoint import Checkpointer
 from utils.evaluator import Evaluator
+from utils.run_paths import output_directories, check_run_destination
 
 
 def set_seed(seed: int = 42):
@@ -89,6 +90,8 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model_name = args.model
     tag = run_name if run_name else model_name
+    log_root, snapshot_root, result_root = output_directories(getattr(args, 'output_root', '.'))
+    check_run_destination(log_root, snapshot_root, tag, args.resume)
 
     print(f"\n============================================================")
     print(f"POLYP SEGMENTATION TRAINING PIPELINE")
@@ -98,6 +101,7 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
     print(f"Resolution: {args.trainsize}x{args.trainsize} ({ms_info})")
     print(f"LR: {args.lr} | Epochs: {args.epochs} | Batch: {args.batchsize}")
     print(f"Output Tag: {tag}")
+    print(f"Output Root: {log_root.parent}")
     print(f"============================================================")
 
     # 1. Setup Dataset
@@ -135,8 +139,7 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
                               shuffle=True, num_workers=num_workers, pin_memory=True)
     val_loader = DataLoader(Subset(val_ds, val_ids), batch_size=args.batchsize,
                             shuffle=False, num_workers=num_workers)
-    os.makedirs('./logs', exist_ok=True)
-    with open(f'./logs/{tag}_config.json', 'w', encoding='utf-8') as handle:
+    with open(log_root / f'{tag}_config.json', 'w', encoding='utf-8') as handle:
         json.dump({'config': vars(args), 'train': [train_ds.images[i] for i in train_ids],
                    'validation': [val_ds.images[i] for i in val_ids]}, handle, indent=2)
     print(f"[Data] Training pairs: {len(train_loader.dataset)} | Validation pairs: {len(val_loader.dataset)}")
@@ -156,25 +159,22 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
         opt_name = "Adam"
 
     # 4. Logger, Checkpointer, and Evaluator
-    logger = Logger(log_dir='./logs', model_name=tag)
-    checkpointer = Checkpointer(save_dir='./snapshots', model_name=tag)
+    logger = Logger(log_dir=log_root, model_name=tag)
+    checkpointer = Checkpointer(save_dir=snapshot_root, model_name=tag)
     val_evaluator = Evaluator(data_root=data_root, model=model, device=device, testsize=args.trainsize)
     trainer = Trainer(model, optimizer, loss_fn, args, logger, checkpointer)
 
     # 5. Resume from checkpoint (optional)
     start_epoch = 1
     if args.resume:
-        if not os.path.exists(args.resume):
-            print(f"[Resume] WARNING: checkpoint '{args.resume}' not found. Starting from epoch 1.")
-        else:
-            resumed_epoch, resumed_metrics = Checkpointer.load(
-                model, args.resume, device=device, optimizer=optimizer
-            )
-            start_epoch = resumed_epoch + 1
-            checkpointer.best_dice = resumed_metrics.get('mDice', 0.0)
-            print(f"[Resume] Resumed from epoch {resumed_epoch} "
-                  f"(best mDice so far: {checkpointer.best_dice:.4f}). "
-                  f"Continuing from epoch {start_epoch}.")
+        resumed_epoch, resumed_metrics = Checkpointer.load(
+            model, args.resume, device=device, optimizer=optimizer, trainer=trainer
+        )
+        start_epoch = resumed_epoch + 1
+        checkpointer.restore_best(args.resume, resumed_epoch, resumed_metrics)
+        print(f"[Resume] Resumed from epoch {resumed_epoch} "
+              f"(best mDice so far: {checkpointer.best_dice:.4f}). "
+              f"Continuing from epoch {start_epoch}.")
 
     # 6. Training Loop
     print(f"[Init] Optimizer: {opt_name} | lr={args.lr}")
@@ -184,7 +184,8 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
         train_stats = trainer.train_one_epoch(train_loader, epoch)
         val_metrics = trainer.validate(val_loader, val_evaluator)
         logger.log(epoch, train_stats, val_metrics)
-        checkpointer.save(model, optimizer, epoch, val_metrics)
+        checkpointer.save(model, optimizer, epoch, val_metrics,
+                          training_state=trainer.training_state_dict())
 
     logger.close()
 
@@ -204,7 +205,7 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
             model_name=args.model,
             weights_path=best_weights
         )
-        results_dir = os.path.join('./results', tag)
+        results_dir = os.path.join(result_root, tag)
 
         # Edge AI Hardware efficiency
         print(f"\n[Evaluation] Profiling Edge AI & Hardware efficiency...")
@@ -227,6 +228,8 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Train Polyp Segmentation Network")
     parser.add_argument('--run_name', type=str, default=None, help='Separate experiment output directory name')
+    parser.add_argument('--output_root', type=str, default='.',
+                        help='Root for logs/snapshots/results; use a mounted Drive path for persistent Colab output')
     parser.add_argument('--lr', type=float, default=None)
     parser.add_argument('--weight_decay', type=float, default=1e-4)
     parser.add_argument('--scheduler', choices=['step', 'cosine'], default=None)
@@ -268,6 +271,8 @@ def main():
     args.decay_epoch = 50
 
     seeds = parse_seeds(args)
+    if args.resume and len(seeds) != 1:
+        parser.error('--resume requires one seed matching the saved run')
 
     if len(seeds) == 1:
         # Standard Single Seed Run

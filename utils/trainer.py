@@ -11,6 +11,7 @@ Faithfully reproduces the training mechanics from the PraNet paper:
 
 import os
 import random
+import numpy as np
 from datetime import datetime
 import torch
 import torch.nn.functional as F
@@ -74,6 +75,28 @@ class Trainer:
         self.model.to(self.device)
         self.use_amp = self.device.type == 'cuda' and getattr(cfg, 'amp', True)
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+
+    def training_state_dict(self):
+        numpy_state = np.random.get_state()
+        return {
+            'scaler': self.scaler.state_dict(),
+            'python_rng': random.getstate(),
+            # Store the NumPy array as primitives for torch.load(weights_only=True).
+            'numpy_rng': (numpy_state[0], numpy_state[1].tolist(), *numpy_state[2:]),
+            'torch_rng': torch.get_rng_state(),
+            'cuda_rng': torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+        }
+
+    def load_training_state(self, state):
+        if state.get('scaler') and self.use_amp:
+            self.scaler.load_state_dict(state['scaler'])
+        random.setstate(state['python_rng'])
+        numpy_state = state['numpy_rng']
+        np.random.set_state((numpy_state[0], np.asarray(numpy_state[1], dtype=np.uint32),
+                             *numpy_state[2:]))
+        torch.set_rng_state(state['torch_rng'].cpu())
+        if torch.cuda.is_available() and state.get('cuda_rng'):
+            torch.cuda.set_rng_state_all([value.cpu() for value in state['cuda_rng']])
 
     def train_one_epoch(self, train_loader, epoch: int) -> dict:
         self.model.train()

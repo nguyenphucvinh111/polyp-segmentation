@@ -1,7 +1,8 @@
 # PID-UNet v2 experiments
 
-Current architecture experiment: [PID-UNet v2 Plus](PID_UNET_V2_PLUS.md), based
-directly on v2 with the same loss and training settings. Earlier variants below
+Current architecture experiment: [PID-UNet v7](PID_UNET_V7.md), trained entirely
+from scratch on the v2 encoder with the same loss and training settings.
+[v2 Plus](PID_UNET_V2_PLUS.md) remains available. Earlier variants below
 are retained for comparison; their names and checkpoints are unchanged.
 
 This is an experimental architecture, not a demonstrated accuracy improvement.
@@ -26,8 +27,9 @@ global_context=False for architecture ablations.
 A fixed seed-42 90/10 image split is taken from TrainDataset for all models.
 Test ClinicDB no longer selects checkpoints. This split is NOT patient/video
 grouped or source-stratified: recover metadata and check duplicates before
-paper experiments. Logs include split filenames and config. Existing output
-names are reused: archive results before rerunning the same model and seed.
+paper experiments. Logs include split filenames and config. A fresh run refuses
+to overwrite existing training output; use a new --run_name or --resume.
+Use --output_root with a mounted Drive directory to keep Colab outputs.
 
 Compare the original model under the same validation protocol:
 

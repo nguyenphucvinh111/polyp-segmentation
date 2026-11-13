@@ -6,6 +6,7 @@ Robust loading handles diverse checkpoint formats (raw weights, wrapped dict, Da
 """
 
 import os
+import shutil
 import torch
 
 
@@ -19,33 +20,43 @@ class Checkpointer:
         self.best_dice = -1.0
         self.best_epoch = 0
 
-    def save(self, model, optimizer, epoch: int, metrics: dict):
+    @staticmethod
+    def _save_file(state, path):
+        path = os.fspath(path)
+        temporary = path + '.tmp'
+        torch.save(state, temporary)
+        os.replace(temporary, path)
+
+    def save(self, model, optimizer, epoch: int, metrics: dict, training_state=None):
         current_dice = metrics.get('mDice', 0.0)
+        improved = current_dice > self.best_dice
         state = {
             'epoch': epoch,
             'model_name': self.model_name,
             'state_dict': model.state_dict(),
             'optimizer': optimizer.state_dict() if optimizer else None,
             'metrics': metrics,
-            'best_dice': max(self.best_dice, current_dice)
+            'best_dice': max(self.best_dice, current_dice),
+            'best_epoch': epoch if improved else self.best_epoch,
+            'training_state': training_state,
         }
 
-        # Save periodic snapshot (every 10 epochs or last epoch)
-        if epoch % 10 == 0:
-            periodic_path = os.path.join(self.save_dir, f"{self.model_name}-{epoch}.pth")
-            torch.save(state, periodic_path)
-            print(f"[Checkpointer] Saved periodic snapshot to '{periodic_path}'.")
-
         # Save best model
-        if current_dice > self.best_dice:
+        if improved:
+            best_path = os.path.join(self.save_dir, "best.pth")
+            self._save_file(state, best_path)
             self.best_dice = current_dice
             self.best_epoch = epoch
-            best_path = os.path.join(self.save_dir, "best.pth")
-            torch.save(state, best_path)
             print(f"[Checkpointer] New best model at epoch {epoch} with mDice={current_dice:.4f} -> Saved to '{best_path}'.")
 
+        self._save_file(state, os.path.join(self.save_dir, 'last.pth'))
+        if epoch % 10 == 0:
+            periodic_path = os.path.join(self.save_dir, f"{self.model_name}-{epoch}.pth")
+            self._save_file(state, periodic_path)
+            print(f"[Checkpointer] Saved periodic snapshot to '{periodic_path}'.")
+
     @staticmethod
-    def load(model, path: str, device=None, optimizer=None):
+    def load(model, path: str, device=None, optimizer=None, trainer=None):
         """
         Load weights safely handling raw state_dict, wrapped state_dict, or 'module.' prefixes.
         """
@@ -96,11 +107,34 @@ class Checkpointer:
             try:
                 optimizer.load_state_dict(checkpoint['optimizer'])
             except Exception as e:
+                if trainer is not None:
+                    raise ValueError('Cannot resume with an incompatible optimizer state') from e
                 print(f"[Checkpointer] Optimizer state could not be restored ({e}).")
 
         epoch = checkpoint.get('epoch', 0) if isinstance(checkpoint, dict) else 0
-        metrics = checkpoint.get('metrics', {}) if isinstance(checkpoint, dict) else {}
+        metrics = dict(checkpoint.get('metrics', {})) if isinstance(checkpoint, dict) else {}
+        if isinstance(checkpoint, dict):
+            metrics['best_dice'] = checkpoint.get('best_dice', metrics.get('mDice', 0.0))
+            metrics['best_epoch'] = checkpoint.get('best_epoch', epoch)
+            if trainer is not None and checkpoint.get('training_state'):
+                trainer.load_training_state(checkpoint['training_state'])
         return epoch, metrics
 
     def get_best_path(self) -> str:
         return os.path.join(self.save_dir, "best.pth")
+
+    def restore_best(self, resume_path, resumed_epoch, resumed_metrics):
+        """Track the best file actually available, including after an interrupted save."""
+        best_path = self.get_best_path()
+        if not os.path.isfile(best_path):
+            source_best = os.path.join(os.path.dirname(os.path.abspath(resume_path)), 'best.pth')
+            if os.path.isfile(source_best):
+                shutil.copy2(source_best, best_path)
+            else:
+                shutil.copy2(resume_path, best_path)
+                print('[Resume] Historical best unavailable; using resumed weights as the initial best candidate.')
+        # best.pth may be newer than last.pth if writing last was interrupted.
+        # Trust the metrics of the stored best weights, not last's cached best_dice.
+        best = torch.load(best_path, map_location='cpu')
+        self.best_dice = best.get('metrics', {}).get('mDice', resumed_metrics.get('mDice', 0.0))
+        self.best_epoch = best.get('epoch', resumed_epoch)
