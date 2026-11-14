@@ -1,8 +1,9 @@
 # PID-UNet v2 experiments
 
-Current architecture experiment: [PID-UNet v7](PID_UNET_V7.md), trained entirely
-from scratch on the v2 encoder with the same loss and training settings.
-[v2 Plus](PID_UNET_V2_PLUS.md) remains available. Earlier variants below
+Current architecture experiments: [PID-UNet v8 and v9](PID_UNET_V8_V9.md),
+independent v2 variants for integral gating and shallow mixed normalization.
+Both train from scratch with the same loss and training settings.
+[v7](PID_UNET_V7.md) and [v2 Plus](PID_UNET_V2_PLUS.md) remain available. Earlier variants below
 are retained for comparison; their names and checkpoints are unchanged.
 
 This is an experimental architecture, not a demonstrated accuracy improvement.

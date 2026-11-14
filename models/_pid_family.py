@@ -2,5 +2,5 @@
 
 PID_V2_MODELS = frozenset({
     "pid_unet_v2", "pid_unet_v3", "pid_unet_v4", "pid_unet_v5", "pid_unet_v6",
-    "pid_unet_v2_plus", "pid_unet_v7",
+    "pid_unet_v2_plus", "pid_unet_v7", "pid_unet_v8", "pid_unet_v9",
 })
