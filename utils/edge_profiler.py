@@ -63,7 +63,12 @@ class EdgeProfiler:
             cpu_model = self.model.to('cpu')
             cpu_model.eval()
             dummy_input = torch.randn(1, 3, self.testsize, self.testsize, device='cpu')
-            flops, _ = thop.profile(cpu_model, inputs=(dummy_input,), verbose=False)
+            # Models with functional attention can supply counters for matrix
+            # products that THOP's standard Conv/Linear hooks do not see.
+            custom_ops = (cpu_model.profiling_custom_ops()
+                          if hasattr(cpu_model, 'profiling_custom_ops') else {})
+            flops, _ = thop.profile(cpu_model, inputs=(dummy_input,),
+                                    custom_ops=custom_ops, verbose=False)
             return flops / 1e9
         except Exception as e:
             print(f"[Profiler] Warning: Failed to calculate FLOPs via thop ({e})")
