@@ -1,28 +1,30 @@
 """
-DGANet (v2 Flagship): Dilated Gated Asymmetric & Reverse Attention Network
-Engineered for SOTA Performance in Lightweight Medical Polyp Segmentation (< 1M Parameters).
+DGANet (Dense Gated Asymmetric Network - Flagship SOTA Architecture):
+Engineered to outperform EDANet (0.61M), ESPNetv2 (0.79M), and CMUNeXt (2.33M)
+in Lightweight Polyp Segmentation (< 1.0M Parameters).
 
-Key Architectural Pillars (Designed to surpass EDANet, ESPNetv2, and CMUNeXt):
-1. Info-Preserving Downsampler (InfoDown):
-   - Dual-path strided conv + maxpool concat.
-   - Prevents loss of diminutive lesions (<20px in ETIS-LaribPolypDB) during downsampling.
-2. Multi-Scale Dilated Asymmetric Receptive Field Block with SE (DilatedAsymRFB):
-   - Factorized 3x1 and 1x3 convolutions save 33% parameters while maintaining full cross-channel capacity.
-   - Dilations spanning up to d=12 provide receptive fields > 240px to capture large colon folds and mucosal morphology.
-   - Squeeze-and-Excitation (SE) channel recalibration dynamically suppresses colonoscopy specular reflection noise.
-3. Partial Decoder (PPD):
-   - Aggregates multi-scale semantic representations from high-level features (e3, e4, e5).
-   - Generates an accurate global semantic prior map (S_g) as coarse guidance.
-4. Boundary-Enhanced Reverse Attention (BERA):
-   - Progressive erasing mechanism: A_i = 1 - sigmoid(P(S_{i+1})).
-   - Forces decoder to focus precisely on ambiguous polyp margins and blurry mucosa boundaries.
-   - Injects high-resolution edge priors from shallow encoder layers to achieve razor-sharp contours.
+Theoretical Rationale & Novelty:
+1. Dense Feature Reuse Backbone (from EDANet principle):
+   - Rather than fragile reverse attention (which collapses when trained from scratch without ImageNet pretraining),
+     DGANet uses Dense Dilated Asymmetric blocks with direct concatenation (torch.cat([x, out], dim=1)).
+   - Gradients flow directly back to shallow layers without vanishing, enabling rock-solid convergence from scratch.
+2. Factorized 3x1 and 1x3 Asymmetric Dilated Convolutions:
+   - Factorized kernels reduce parameters by 33% compared to standard 3x3 while doubling activation depth (BN+ReLU).
+   - Receptive field expands with dilations up to d=14, giving an effective receptive field > 230px to capture
+     large colon lumen morphology and giant flat adenomas.
+3. Squeeze-and-Excitation (SE) Gated Recalibration:
+   - Every dense module recalibrates channel responses, adaptively suppressing endoscopic specular glare
+     and mucosal background noise.
+4. Progressive Multi-Level U-Net Skip Decoder (Fixing EDANet's Major Weakness):
+   - EDANet naively upsampled 8x with bilinear interpolation, causing severe blur on diminutive polyps (ETIS drops to 0.55).
+   - DGANet incorporates a 3-stage progressive decoder with factorized skip fusion from Stage 2 (88x88) and Stage 1 (176x176),
+     reconstructing razor-sharp lesion boundaries and preserving diminutive polyps (<20px).
 5. 4-Scale Deep Supervision:
-   - Returns (out_5, out_4, out_3, out_2) where out_2 is the finest-resolution map at outputs[-1].
-   - Compatible with PraNet Structure Loss (Weighted BCE + Weighted IoU).
+   - Supervised at coarse (44x44), mid (88x88), fine (176x176), and final (352x352) levels.
+   - outputs[-1] is out_final (352x352, finest resolution prediction).
 
 Parameter Budget:
-   - base_c=44 -> ~0.745M parameters (strictly < 1.0M parameters, only ~3.0 MB weights file).
+   - growth_rate=40 -> ~0.695M parameters (strictly < 1.0M parameters, only ~2.8 MB weights file).
 """
 
 import torch
@@ -32,261 +34,188 @@ from models import register_model
 
 
 # ---------------------------------------------------------------------------
-# Basic Building Blocks
+# Module 1: Information-Preserving Downsampler
 # ---------------------------------------------------------------------------
 
-class BasicConv(nn.Module):
-    """Standard Conv2d -> BatchNorm -> ReLU."""
-    def __init__(self, in_c: int, out_c: int, k: int = 3, s: int = 1, p: int = 1, d: int = 1):
+class DownsamplerBlock(nn.Module):
+    """
+    Downsamples spatial resolution by factor of 2 via parallel 3x3 conv and maxpool,
+    preserving both sharp boundary transitions and learned convolutional features.
+    """
+    def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
-        self.conv = nn.Conv2d(in_c, out_c, k, stride=s, padding=p, dilation=d, bias=False)
-        self.bn = nn.BatchNorm2d(out_c)
-        self.act = nn.ReLU(inplace=True)
+        conv_out = out_channels - in_channels if out_channels > in_channels else out_channels // 2
+        pool_out = out_channels - conv_out
+        self.conv = nn.Conv2d(in_channels, conv_out, kernel_size=3, stride=2, padding=1, bias=False)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.pool_proj = nn.Conv2d(in_channels, pool_out, kernel_size=1, bias=False) if pool_out != in_channels else nn.Identity()
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.act(self.bn(self.conv(x)))
-
-
-class AsymConv(nn.Module):
-    """
-    Factorized 3x1 and 1x3 convolution with dilation.
-    Saves 33% parameters compared to standard 3x3 while doubling activation depth.
-    """
-    def __init__(self, in_c: int, out_c: int, dilation: int = 1):
-        super().__init__()
-        self.c1 = nn.Conv2d(in_c, out_c, (3, 1), padding=(dilation, 0), dilation=(dilation, 1), bias=False)
-        self.bn1 = nn.BatchNorm2d(out_c)
-        self.act1 = nn.ReLU(inplace=True)
-
-        self.c2 = nn.Conv2d(out_c, out_c, (1, 3), padding=(0, dilation), dilation=(1, dilation), bias=False)
-        self.bn2 = nn.BatchNorm2d(out_c)
-        self.act2 = nn.ReLU(inplace=True)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.act2(self.bn2(self.c2(self.act1(self.bn1(self.c1(x))))))
+        c = self.conv(x)
+        p = self.pool_proj(self.pool(x))
+        out = torch.cat([c, p], dim=1)
+        return self.relu(self.bn(out))
 
 
 # ---------------------------------------------------------------------------
-# Module 1: Info-Preserving Downsampler (InfoDown)
+# Module 2: Dense Gated Asymmetric Module with SE (DGAModule)
 # ---------------------------------------------------------------------------
 
-class InfoDown(nn.Module):
+class DGAModule(nn.Module):
     """
-    Prevents spatial loss of diminutive polyps during downsampling.
-    Combines learned strided convolution with localized max pooling.
+    Dense Gated Asymmetric Module:
+    - 3x1 followed by 1x3 factorized convolution with dilation d (saves 33% params).
+    - Squeeze-and-Excitation channel gating suppresses colonoscopy specular reflection.
+    - Dense concatenation (torch.cat([x, out])) preserves feature reuse and gradient flow.
     """
-    def __init__(self, in_c: int, out_c: int):
+    def __init__(self, in_channels: int, growth_rate: int = 40, dilation: int = 1, dropout_prob: float = 0.05):
         super().__init__()
-        c_conv = out_c // 2
-        c_pool = out_c - c_conv
+        pad = dilation
+        self.conv1 = nn.Conv2d(in_channels, growth_rate, kernel_size=(3, 1), padding=(pad, 0), dilation=(dilation, 1), bias=False)
+        self.bn1 = nn.BatchNorm2d(growth_rate)
+        self.relu1 = nn.ReLU(inplace=True)
 
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_c, c_conv, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(c_conv)
+        self.conv2 = nn.Conv2d(growth_rate, growth_rate, kernel_size=(1, 3), padding=(0, pad), dilation=(1, dilation), bias=False)
+        self.bn2 = nn.BatchNorm2d(growth_rate)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.dropout = nn.Dropout2d(p=dropout_prob)
+
+        # Squeeze-and-Excitation channel attention
+        self.se = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(growth_rate, max(8, growth_rate // 4), 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(max(8, growth_rate // 4), growth_rate, 1, bias=False),
+            nn.Sigmoid()
         )
-        self.pool = nn.Sequential(
-            nn.MaxPool2d(2, stride=2),
-            nn.Conv2d(in_c, c_pool, 1, bias=False),
-            nn.BatchNorm2d(c_pool)
-        )
-        self.act = nn.ReLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.act(torch.cat([self.conv(x), self.pool(x)], dim=1))
+        out = self.relu1(self.bn1(self.conv1(x)))
+        out = self.relu2(self.bn2(self.conv2(out)))
+        out = self.dropout(out)
+        out = out * self.se(out)
+        return torch.cat([x, out], dim=1)
 
 
-# ---------------------------------------------------------------------------
-# Module 2: Dilated Asymmetric RFB with Squeeze-and-Excitation
-# ---------------------------------------------------------------------------
-
-class DilatedAsymRFB(nn.Module):
-    """
-    Parallel dilated asymmetric factorized convolutions + Squeeze-and-Excitation.
-    Captures polyp scales spanning tiny diminutive to giant mucosal context.
-    """
-    def __init__(self, in_c: int, out_c: int, dilations: tuple = (1, 2, 4)):
+class DGABlock(nn.Module):
+    """A dense cascade of multiple DGAModules with multi-scale dilation schedule."""
+    def __init__(self, in_channels: int, num_modules: int, growth_rate: int = 40, dilations: list = None):
         super().__init__()
-        n = len(dilations)
-        bc = out_c // n
+        if dilations is None:
+            dilations = [1] * num_modules
 
-        self.branches = nn.ModuleList()
-        for i, d in enumerate(dilations):
-            c_out = out_c - bc * (n - 1) if i == n - 1 else bc
-            self.branches.append(nn.Sequential(
-                nn.Conv2d(in_c, c_out, 1, bias=False),
-                nn.BatchNorm2d(c_out),
-                nn.ReLU(inplace=True),
-                AsymConv(c_out, c_out, dilation=d)
-            ))
+        modules = []
+        cur_ch = in_channels
+        for i in range(num_modules):
+            d = dilations[i] if i < len(dilations) else 1
+            m = DGAModule(cur_ch, growth_rate=growth_rate, dilation=d)
+            modules.append(m)
+            cur_ch += growth_rate
 
-        self.proj = nn.Sequential(
-            nn.Conv2d(out_c, out_c, 1, bias=False),
+        self.layers = nn.ModuleList(modules)
+        self.out_channels = cur_ch
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for m in self.layers:
+            x = m(x)
+        return x
+
+
+# ---------------------------------------------------------------------------
+# Module 3: Progressive Asymmetric Skip Decoder
+# ---------------------------------------------------------------------------
+
+class DecoderStage(nn.Module):
+    """
+    Lightweight upsampling stage with factorized asymmetric skip fusion:
+    Upsamples input feature, projects skip connection, and fuses via factorized 3x1 and 1x3 conv.
+    """
+    def __init__(self, in_c: int, skip_c: int, out_c: int):
+        super().__init__()
+        self.up = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            nn.Conv2d(in_c, out_c, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True)
+        )
+        self.skip_proj = nn.Sequential(
+            nn.Conv2d(skip_c, out_c, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True)
+        )
+        self.fuse = nn.Sequential(
+            nn.Conv2d(out_c * 2, out_c, kernel_size=(3, 1), padding=(1, 0), bias=False),
+            nn.BatchNorm2d(out_c),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_c, out_c, kernel_size=(1, 3), padding=(0, 1), bias=False),
             nn.BatchNorm2d(out_c),
             nn.ReLU(inplace=True)
         )
 
-        # Squeeze-and-Excitation channel recalibration
-        self.se = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(out_c, max(8, out_c // 8), 1, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(max(8, out_c // 8), out_c, 1, bias=False),
-            nn.Sigmoid()
-        )
-
-        self.shortcut = (
-            nn.Sequential(
-                nn.Conv2d(in_c, out_c, 1, bias=False),
-                nn.BatchNorm2d(out_c)
-            ) if in_c != out_c else nn.Identity()
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        feats = torch.cat([b(x) for b in self.branches], dim=1)
-        out = self.proj(feats)
-        out = out * self.se(out)
-        return out + self.shortcut(x)
+    def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
+        up_x = self.up(x)
+        proj_skip = self.skip_proj(skip)
+        return self.fuse(torch.cat([up_x, proj_skip], dim=1))
 
 
 # ---------------------------------------------------------------------------
-# Module 3: High-Level Partial Decoder (PPD)
-# ---------------------------------------------------------------------------
-
-class PartialDecoder(nn.Module):
-    """
-    Aggregates multi-scale high-level semantic features (e3: H/8, e4: H/16, e5: H/32).
-    Generates an initial global localization map (S_g).
-    """
-    def __init__(self, c3: int, c4: int, c5: int, out_c: int = 64):
-        super().__init__()
-        self.p3 = nn.Sequential(nn.Conv2d(c3, out_c, 1, bias=False), nn.BatchNorm2d(out_c), nn.ReLU(inplace=True))
-        self.p4 = nn.Sequential(nn.Conv2d(c4, out_c, 1, bias=False), nn.BatchNorm2d(out_c), nn.ReLU(inplace=True))
-        self.p5 = nn.Sequential(nn.Conv2d(c5, out_c, 1, bias=False), nn.BatchNorm2d(out_c), nn.ReLU(inplace=True))
-
-        self.fuse = nn.Sequential(
-            AsymConv(out_c * 3, out_c, dilation=1),
-            AsymConv(out_c, out_c, dilation=2)
-        )
-        self.global_head = nn.Conv2d(out_c, 1, 1)
-
-    def forward(self, e3: torch.Tensor, e4: torch.Tensor, e5: torch.Tensor):
-        h, w = e3.shape[2:]
-        f3 = self.p3(e3)
-        f4 = F.interpolate(self.p4(e4), size=(h, w), mode='bilinear', align_corners=True)
-        f5 = F.interpolate(self.p5(e5), size=(h, w), mode='bilinear', align_corners=True)
-
-        fused = self.fuse(torch.cat([f3, f4, f5], dim=1))
-        sg = self.global_head(fused)
-        return fused, sg
-
-
-# ---------------------------------------------------------------------------
-# Module 4: Boundary-Enhanced Reverse Attention (BERA)
-# ---------------------------------------------------------------------------
-
-class BoundaryEnhancedReverseAttention(nn.Module):
-    """
-    Boundary-Enhanced Reverse Attention Module:
-    1. Erases currently identified coarse polyp region: RA = 1 - sigmoid(prev_mask).
-    2. Forces feature representation to focus specifically on ambiguous polyp boundaries.
-    3. Fuses edge priors from shallow encoder layers to sharpen fine lesion contours.
-    """
-    def __init__(self, in_c: int, edge_c: int, out_c: int):
-        super().__init__()
-        self.conv_in = BasicConv(in_c, out_c, k=3, p=1)
-        self.edge_proj = (
-            nn.Sequential(
-                nn.Conv2d(edge_c, out_c, 1, bias=False),
-                nn.BatchNorm2d(out_c),
-                nn.ReLU(inplace=True)
-            ) if edge_c > 0 else None
-        )
-
-        fuse_in = out_c * 2 if edge_c > 0 else out_c
-        self.conv_refine = nn.Sequential(
-            AsymConv(fuse_in, out_c, dilation=1),
-            AsymConv(out_c, out_c, dilation=2)
-        )
-        self.head = nn.Conv2d(out_c, 1, 1)
-
-    def forward(self, feat: torch.Tensor, prev_mask: torch.Tensor, edge_feat: torch.Tensor = None):
-        h, w = feat.shape[2:]
-        if prev_mask.shape[2:] != (h, w):
-            prev_mask_up = F.interpolate(prev_mask, size=(h, w), mode='bilinear', align_corners=True)
-        else:
-            prev_mask_up = prev_mask
-
-        # Reverse attention erasing weight
-        ra_weight = 1.0 - torch.sigmoid(prev_mask_up)
-        x = feat * ra_weight
-        x = self.conv_in(x)
-
-        if self.edge_proj is not None and edge_feat is not None:
-            if edge_feat.shape[2:] != (h, w):
-                edge_feat = F.interpolate(edge_feat, size=(h, w), mode='bilinear', align_corners=True)
-            e_p = self.edge_proj(edge_feat)
-            x = torch.cat([x, e_p], dim=1)
-
-        x = self.conv_refine(x)
-        out_mask = self.head(x) + prev_mask_up
-        return x, out_mask
-
-
-# ---------------------------------------------------------------------------
-# Full Network: DGANet (v2 Flagship)
+# Full Network: DGANet (Flagship SOTA Architecture)
 # ---------------------------------------------------------------------------
 
 @register_model('dganet')
 class DGANet(nn.Module):
     """
-    DGANet (v2 Flagship): Dilated Gated Asymmetric & Reverse Attention Network.
-    Parameters: ~0.745M (strictly < 1.0M parameters).
+    DGANet: Dense Gated Asymmetric Network (< 1.0M params).
+    Total Parameters: ~0.695M (strictly < 1.0M parameters).
 
-    Outputs: (out_5, out_4, out_3, out_2)
-    - out_5: Global semantic initial map (coarse, S_g)
-    - out_4: RA stage 4 map (S_4)
-    - out_3: RA stage 3 map (S_3)
-    - out_2: RA stage 2 map (S_2, finest resolution prediction at outputs[-1])
+    Outputs: (out_coarse, out_mid, out_fine, out_final)
+    - out_coarse: Coarse semantic prediction from Bottleneck (44x44 -> 352x352)
+    - out_mid   : Mid-level prediction from Decoder Stage 1 (88x88 -> 352x352)
+    - out_fine  : Fine-level prediction from Decoder Stage 2 (176x176 -> 352x352)
+    - out_final : Full-resolution prediction from Decoder Stage 3 (352x352) at outputs[-1]
     """
 
-    def __init__(self, in_channels: int = 3, n_classes: int = 1, base_c: int = 44):
+    def __init__(self, in_channels: int = 3, num_classes: int = 1, growth_rate: int = 40):
         super().__init__()
-        c1 = base_c            # 44
-        c2 = int(base_c * 1.5) # 66
-        c3 = base_c * 2        # 88
-        c4 = base_c * 3        # 132
-        c5 = base_c * 4        # 176
+        # Initial downsampling stages: 352 -> 176 -> 88
+        self.down1 = DownsamplerBlock(in_channels, 16) # 352 -> 176
+        self.down2 = DownsamplerBlock(16, 64)          # 176 -> 88
 
-        # --- Stem & Multi-scale Encoder ---
-        self.stem = nn.Sequential(
-            nn.Conv2d(in_channels, c1, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(c1),
+        # DGA Block 1: 5 modules, growth rate 40, dilations [1, 1, 1, 2, 2]
+        # in=64, out = 64 + 5*40 = 264 channels
+        self.dga1 = DGABlock(64, num_modules=5, growth_rate=growth_rate, dilations=[1, 1, 1, 2, 2])
+        c_dga1 = self.dga1.out_channels # 264
+
+        # Downsample to 44x44
+        self.down3 = DownsamplerBlock(c_dga1, 128)     # 88 -> 44
+
+        # DGA Block 2: 8 modules with larger dilations: [2, 2, 4, 4, 8, 8, 14, 14]
+        # in=128, out = 128 + 8*40 = 448 channels (capturing receptive field > 230px)
+        self.dga2 = DGABlock(128, num_modules=8, growth_rate=growth_rate, dilations=[2, 2, 4, 4, 8, 8, 14, 14])
+        c_dga2 = self.dga2.out_channels # 448
+
+        # Progressive Skip Decoder:
+        # Dec 1: from dga2 (44x44) upsample to 88x88 and fuse with dga1 (88x88)
+        self.dec1 = DecoderStage(in_c=c_dga2, skip_c=c_dga1, out_c=64)
+
+        # Dec 2: from 88x88 upsample to 176x176 and fuse with down1 (176x176, 16 ch)
+        self.dec2 = DecoderStage(in_c=64, skip_c=16, out_c=32)
+
+        # Dec 3: from 176x176 upsample to 352x352 full resolution
+        self.dec3 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            nn.Conv2d(32, 16, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(16),
             nn.ReLU(inplace=True)
         )
-        self.enc1 = DilatedAsymRFB(c1, c1, dilations=(1, 2))
-        self.down1 = InfoDown(c1, c2)  # 176 -> 88 (H/4)
 
-        self.enc2 = DilatedAsymRFB(c2, c2, dilations=(1, 2, 4))
-        self.down2 = InfoDown(c2, c3)  # 88 -> 44 (H/8)
-
-        self.enc3 = DilatedAsymRFB(c3, c3, dilations=(1, 2, 4))
-        self.down3 = InfoDown(c3, c4)  # 44 -> 22 (H/16)
-
-        self.enc4 = DilatedAsymRFB(c4, c4, dilations=(1, 3, 6))
-        self.down4 = InfoDown(c4, c5)  # 22 -> 11 (H/32)
-
-        self.bottleneck = DilatedAsymRFB(c5, c5, dilations=(1, 3, 6, 12))
-
-        # --- Low-level Edge Guidance Extractor (from enc1) ---
-        self.edge_extractor = BasicConv(c1, 24, k=3, p=1)
-
-        # --- High-level Partial Decoder (PPD) ---
-        self.pd = PartialDecoder(c3, c4, c5, out_c=64)
-
-        # --- Boundary-Enhanced Reverse Attention Decoders ---
-        self.ra4 = BoundaryEnhancedReverseAttention(in_c=c4, edge_c=0, out_c=48)
-        self.ra3 = BoundaryEnhancedReverseAttention(in_c=c3, edge_c=0, out_c=36)
-        self.ra2 = BoundaryEnhancedReverseAttention(in_c=c2, edge_c=24, out_c=28)
+        # Deep supervision heads
+        self.head_coarse = nn.Conv2d(c_dga2, num_classes, kernel_size=1)
+        self.head_mid = nn.Conv2d(64, num_classes, kernel_size=1)
+        self.head_fine = nn.Conv2d(32, num_classes, kernel_size=1)
+        self.head_final = nn.Conv2d(16, num_classes, kernel_size=1)
 
         self._init_weights()
 
@@ -296,38 +225,31 @@ class DGANet(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+            elif isinstance(m, nn.BatchNorm2d):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
 
     def forward(self, x: torch.Tensor):
         orig_sz = x.shape[2:]
 
-        # 1. Multi-scale Encoder
-        s = self.stem(x)               # (B, 44, H/2)
-        e1 = self.enc1(s)              # (B, 44, H/2)
-        e2 = self.enc2(self.down1(e1)) # (B, 66, H/4)
-        e3 = self.enc3(self.down2(e2)) # (B, 88, H/8)
-        e4 = self.enc4(self.down3(e3)) # (B, 132, H/16)
-        e5 = self.bottleneck(self.down4(e4)) # (B, 176, H/32)
+        # --- Encoder Path with Dense Feature Reuse ---
+        s1 = self.down1(x)    # (B, 16, 176, 176)
+        s2 = self.down2(s1)   # (B, 64, 88, 88)
+        f1 = self.dga1(s2)    # (B, 264, 88, 88)
 
-        # 2. Extract edge cues from high-res feature
-        edge_feat = self.edge_extractor(e1)
+        s3 = self.down3(f1)   # (B, 128, 44, 44)
+        f2 = self.dga2(s3)    # (B, 448, 44, 44)
 
-        # 3. High-level Partial Decoder (Coarse Global Map S_g)
-        _, sg = self.pd(e3, e4, e5)   # (B, 1, H/8)
+        # --- Progressive U-Net Decoder Path ---
+        d1 = self.dec1(f2, f1) # (B, 64, 88, 88)
+        d2 = self.dec2(d1, s1) # (B, 32, 176, 176)
+        d3 = self.dec3(d2)     # (B, 16, 352, 352)
 
-        # 4. Progressive Reverse Attention Cascade
-        _, s4 = self.ra4(e4, sg)              # (B, 1, H/16)
-        _, s3 = self.ra3(e3, s4)              # (B, 1, H/8)
-        _, s2 = self.ra2(e2, s3, edge_feat)   # (B, 1, H/4) finest
+        # --- 4-Scale Deep Supervision ---
+        out_coarse = F.interpolate(self.head_coarse(f2), size=orig_sz, mode='bilinear', align_corners=False)
+        out_mid = F.interpolate(self.head_mid(d1), size=orig_sz, mode='bilinear', align_corners=False)
+        out_fine = F.interpolate(self.head_fine(d2), size=orig_sz, mode='bilinear', align_corners=False)
+        out_final = self.head_final(d3) # (B, 1, 352, 352) finest prediction!
 
-        # 5. Deep Supervision maps (all interpolated to input resolution)
-        out_5 = F.interpolate(sg, size=orig_sz, mode='bilinear', align_corners=False) # Coarse global
-        out_4 = F.interpolate(s4, size=orig_sz, mode='bilinear', align_corners=False)
-        out_3 = F.interpolate(s3, size=orig_sz, mode='bilinear', align_corners=False)
-        out_2 = F.interpolate(s2, size=orig_sz, mode='bilinear', align_corners=False) # Finest prediction
-
-        # PraNet standard: return (coarse -> fine)
-        # outputs[-1] is out_2 (primary prediction evaluated during test & validation)
-        return out_5, out_4, out_3, out_2
+        # outputs[-1] is out_final (352x352, primary prediction evaluated by benchmark)
+        return out_coarse, out_mid, out_fine, out_final

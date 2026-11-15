@@ -1,24 +1,24 @@
 """
-Enhanced Tiny PID-UNet (< 1M Parameters, Flagship Version 4):
+Enhanced Tiny PID-UNet (< 1M Parameters, Flagship Version 5):
 High-Precision Architecture for Real-Time & Edge-AI Medical Polyp Segmentation.
 
 Key Architectural Innovations (Engineered to Outperform EDANet across ALL 5 benchmarks):
 1. Info-Preserving Downsampler (Dual-Path Conv + MaxPool Concat):
-   - Preserves diminutive lesions (< 20px) typical in ETIS without information loss.
-2. SE-Asymmetric RFB with Dropout:
-   - Factorized 3x1/1x3 asymmetric convolutions + SE recalibration + multi-scale dilations.
-   - Bottleneck: dilations (1, 3, 6, 12) — optimal for the 22x22 spatial resolution.
-   - Gentle Dropout2d (p=0.05) at bottleneck for cross-domain generalization (ColonDB).
-3. Soft Semantic PID Attention Block (SoftPIDBAG) — KEY FIX FOR ColonDB & CVC-300:
-   - Proportional (P): Soft gate `alpha + (1-alpha)*sal_mask` with learnable alpha (init=0.35).
-     Prevents total skip-connection suppression in uncertain regions (ambiguous polyps in ColonDB).
-   - Integral (I): Deep decoder context with residual shortcut.
-   - Derivative (D): Spatial Laplacian |P - AvgPool(P)| modulated by boundary + saliency.
-   - Adaptive PID Controller: Instance-specific (Kp, Ki, Kd) gains.
-4. 4-Scale Semantic Boundary Branch (e1, e2, e3, e4, i_feat):
-   - Adds e4 (H/8) to boundary branch for capturing mid-to-large polyp outlines (ColonDB strength).
+   - Preserves diminutive lesions (< 20px) typical in ETIS-LaribPolypDB without spatial information loss.
+2. Hybrid Receptive Field Bottleneck (Dense Multi-Scale + Global Context Pooling):
+   - Multi-scale dilations (1, 2, 4, 8) designed to fit the 22x22 spatial grid without gridding artifacts.
+   - Global Image-Level Pooling branch provides whole-colon illumination context.
+   - Spatial Dropout2d (p=0.05) prevents overfitting on the 1450 training pairs.
+3. Soft-Gated Derivative PID Attention Block (SoftPIDBAG v5):
+   - Proportional (P): Soft gate `alpha + (1-alpha)*sal_mask` preserves signal in flat/diminutive lesions.
+   - Derivative (D): Discrete Laplacian |P - AvgPool(P)| modulated by boundary attention AND soft gate,
+     preventing extinction of high-frequency edges on diminutive polyps in ETIS.
+   - Integral (I): Deep multi-scale decoder context with residual highway (+ i_proj).
+   - Dynamic PID Controller: Per-frame dynamic allocation of (Kp, Ki, Kd) gains.
+4. 5-Scale Semantic Boundary Stream (e1, e2, e3, e4, i_feat):
+   - Aggregates features from fine spatial textures (e1) up to deep semantics (e4, i_feat).
 5. Parameter Budget:
-   - base_c = 32 -> ~0.839M parameters (strictly < 1.0M).
+   - base_c = 32 -> ~0.805M parameters (strictly < 1.0M, only ~3.07 MB weights file).
 """
 
 import torch
@@ -113,35 +113,45 @@ class InfoPreservingDownsample(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Multi-Scale Asymmetric Receptive Field Block with SE (SE-Asymmetric RFB)
+# Multi-Scale Asymmetric Receptive Field Block with Optional Global Context
 # ---------------------------------------------------------------------------
 
 class AsymmetricRFB(nn.Module):
     """
     Parallel multi-scale dilated asymmetric convolutions with Squeeze-and-Excitation,
-    optional spatial dropout, and residual shortcut.
+    optional global context pooling, optional spatial dropout, and residual shortcut.
     """
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
         dilations: tuple = (1, 2, 4),
-        dropout_p: float = 0.0
+        dropout_p: float = 0.0,
+        use_global: bool = False
     ):
         super().__init__()
-        num_branches = len(dilations)
+        self.use_global = use_global
+        num_branches = len(dilations) + (1 if use_global else 0)
         branch_c = out_channels // num_branches
         rem_c = out_channels - branch_c * (num_branches - 1)
 
         self.branches = nn.ModuleList()
         for idx, d in enumerate(dilations):
-            bc = rem_c if idx == num_branches - 1 else branch_c
+            bc = rem_c if (idx == num_branches - 1 and not use_global) else branch_c
             self.branches.append(nn.Sequential(
                 nn.Conv2d(in_channels, bc, kernel_size=1, bias=False),
                 nn.BatchNorm2d(bc),
                 nn.ReLU(inplace=True),
                 AsymmetricConv(bc, bc, dilation=d)
             ))
+
+        if use_global:
+            self.global_branch = nn.Sequential(
+                nn.AdaptiveAvgPool2d(1),
+                nn.Conv2d(in_channels, rem_c, kernel_size=1, bias=False),
+                nn.BatchNorm2d(rem_c),
+                nn.ReLU(inplace=True)
+            )
 
         self.fuse = nn.Sequential(
             nn.Conv2d(out_channels, out_channels, kernel_size=1, bias=False),
@@ -159,6 +169,9 @@ class AsymmetricRFB(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         feats = [b(x) for b in self.branches]
+        if self.use_global:
+            g = F.interpolate(self.global_branch(x), size=x.shape[2:], mode='bilinear', align_corners=True)
+            feats.append(g)
         out = self.fuse(torch.cat(feats, dim=1)) + self.shortcut(x)
         return self.drop(out)
 
@@ -195,26 +208,19 @@ class AdaptivePIDGating(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Soft Semantic PID Attention Block (SoftPIDBAG) — Flagship v4 Key Module
+# Soft Semantic PID Attention Block (SoftPIDBAG v5)
 # ---------------------------------------------------------------------------
 
 class SoftPIDBAG(nn.Module):
     """
-    Soft Semantic PID Attention Guidance Block (Flagship v4):
-
-    KEY FIX over v3: Replaces the hard gate (p * sal) with a SOFT gate:
-        p_gated = p_proj * (alpha + (1-alpha) * sal_mask)
-    where alpha is a learnable scalar (init=0.35). This ensures that even in
-    uncertain/ambiguous polyp regions (ColonDB, CVC-300), at least 35% of the
-    skip-connection signal is preserved, preventing total suppression of true positives
-    while still strongly attenuating confirmed background (sal_mask -> 0 -> floor alpha).
-
-    Components:
-    1. P (Proportional): Soft-gated skip connection features.
-    2. I (Integral):     Deep decoder context with residual shortcut.
-    3. D (Derivative):   Laplacian |P - AvgPool(P)| x boundary_att x sal_mask.
-    4. Dynamic PID:      Per-frame learnable (Kp, Ki, Kd) allocation.
-    5. SE + AsymConv + Residual: Final recalibration and gradient highway.
+    Soft Semantic PID Attention Guidance Block (Flagship v5):
+    1. Proportional (P): Soft-gated skip features with learnable baseline alpha:
+       `p_gated = p_proj * (alpha + (1-alpha)*sal_mask)`
+    2. Derivative (D): High-frequency discrete Laplacian (|P - AvgPool(P)|) modulated
+       by boundary attention AND soft gate to prevent silencing tiny lesions in ETIS.
+    3. Integral (I): Accumulated multi-scale context from the deeper decoder stage.
+    4. Adaptive PID Controller: Allocates frame-specific weights (Kp, Ki, Kd).
+    5. SE Channel Recalibration & Residual Shortcut (+ i_proj).
     """
     def __init__(self, p_channels: int, i_channels: int, out_channels: int):
         super().__init__()
@@ -228,7 +234,7 @@ class SoftPIDBAG(nn.Module):
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
         )
-        # Saliency gate: 2-layer bottleneck for richer semantic presence estimation
+        # Saliency gate from I context: filters out false-alarm mucosal folds
         mid_c = max(16, out_channels // 2)
         self.saliency_gate = nn.Sequential(
             nn.Conv2d(i_channels, mid_c, kernel_size=1, bias=False),
@@ -237,9 +243,9 @@ class SoftPIDBAG(nn.Module):
             nn.Conv2d(mid_c, 1, kernel_size=1, bias=False),
             nn.Sigmoid()
         )
-        # Learnable soft gate floor: init 0.35 (preserves 35% signal in uncertain background)
+        # Learnable soft gate floor: init 0.35 (preserves signal in flat/diminutive lesions)
         self.alpha = nn.Parameter(torch.tensor(0.35))
-        # Discrete Laplacian high-pass filter for Derivative (D)
+        # High-pass difference operator for Derivative (D)
         self.diff_pool = nn.AvgPool2d(kernel_size=3, stride=1, padding=1)
         self.pid_gate = AdaptivePIDGating(i_channels)
         self.se = SqueezeExcitation(out_channels)
@@ -252,49 +258,50 @@ class SoftPIDBAG(nn.Module):
         if boundary_map.shape[2:] != (h, w):
             boundary_map = F.interpolate(boundary_map, size=(h, w), mode='bilinear', align_corners=True)
 
-        sal_mask = self.saliency_gate(i_feat)        # (B, 1, H, W) in [0, 1]
+        sal_mask = self.saliency_gate(i_feat)
         p_proj = self.proj_p(p_feat)
         i_proj = self.proj_i(i_feat)
 
-        # 1. P Component: Soft gate — retains min `alpha` baseline even in uncertain background
-        alpha = torch.clamp(self.alpha, 0.0, 0.6)   # clip to reasonable range [0, 0.6]
-        soft_gate = alpha + (1.0 - alpha) * sal_mask  # in [alpha, 1.0]
+        # 1. P Component: Soft gate — retains min `alpha` baseline even in ambiguous background
+        alpha = torch.clamp(self.alpha, 0.0, 0.6)
+        soft_gate = alpha + (1.0 - alpha) * sal_mask
         p_gated = p_proj * soft_gate
 
-        # 2. D Component: Laplacian high-pass × boundary attention × saliency
+        # 2. D Component: Discrete Laplacian difference modulated by boundary attention & soft gate
         p_diff = torch.abs(p_proj - self.diff_pool(p_proj))
         edge_att = torch.sigmoid(boundary_map)
-        d_comp = p_diff * edge_att * sal_mask         # D stays hard-gated (purely edge-driven)
+        d_comp = p_diff * edge_att * soft_gate
 
-        # 3. Dynamic PID weighting
+        # 3. Dynamic PID Controller Weighting
         kp, ki, kd = self.pid_gate(i_feat)
         f_pid = kp * p_gated + ki * i_proj + kd * d_comp
 
-        # 4. SE recalibration + asymmetric refinement + residual highway
-        return self.fuse(self.se(f_pid)) + i_proj
+        # 4. Channel recalibration, asymmetric convolution, and residual shortcut
+        fused = self.fuse(self.se(f_pid))
+        return fused + i_proj
 
 
 # ---------------------------------------------------------------------------
-# 4-Scale Semantic Boundary Branch (e1, e2, e3, e4, i_feat)
+# 5-Scale Semantic Boundary Branch (e1, e2, e3, e4, i_feat)
 # ---------------------------------------------------------------------------
 
 class SemanticBoundaryBranch(nn.Module):
     """
-    4-Scale Derivative Boundary Branch with Semantic Filtering (Flagship v4):
-    Adds e4 (H/8, deeper encoder features) on top of e1/e2/e3 and i_feat.
-    e4 provides mid-to-large polyp boundary cues crucial for CVC-ColonDB (diverse polyp sizes).
+    5-Scale Derivative Boundary Branch with Semantic Filtering:
+    Combines multi-scale encoder cues (e1, e2, e3, e4) with deep semantic guidance (i_feat).
+    Ensures that boundary detection fires at true lesion edges, NOT normal mucosal folds.
     """
     def __init__(self, c1: int, c2: int, c3: int, c4: int, c5: int, d_channels: int = 24):
         super().__init__()
         self.r1 = nn.Conv2d(c1, d_channels, kernel_size=1, bias=False)
         self.r2 = nn.Conv2d(c2, d_channels, kernel_size=1, bias=False)
         self.r3 = nn.Conv2d(c3, d_channels, kernel_size=1, bias=False)
-        self.r4 = nn.Conv2d(c4, d_channels, kernel_size=1, bias=False)   # NEW: e4 scale
+        self.r4 = nn.Conv2d(c4, d_channels, kernel_size=1, bias=False)
         self.r_sem = nn.Conv2d(c5, d_channels, kernel_size=1, bias=False)
 
         self.fuse = nn.Sequential(
-            AsymmetricConv(d_channels * 5, d_channels, dilation=1),      # 5 branches (was 4)
-            nn.Conv2d(d_channels, 1, kernel_size=1)                       # 1-channel boundary logits
+            AsymmetricConv(d_channels * 5, d_channels, dilation=1),
+            nn.Conv2d(d_channels, 1, kernel_size=1)  # 1-channel boundary logits
         )
 
     def forward(
@@ -305,29 +312,29 @@ class SemanticBoundaryBranch(nn.Module):
         e4: torch.Tensor,
         i_feat: torch.Tensor
     ) -> torch.Tensor:
-        target_size = e2.shape[2:]  # H/2, W/2 — fuse at this resolution
+        target_size = e2.shape[2:]  # H/2, W/2
         f1 = F.interpolate(self.r1(e1), size=target_size, mode='bilinear', align_corners=True)
         f2 = self.r2(e2)
         f3 = F.interpolate(self.r3(e3), size=target_size, mode='bilinear', align_corners=True)
-        f4 = F.interpolate(self.r4(e4), size=target_size, mode='bilinear', align_corners=True)  # NEW
+        f4 = F.interpolate(self.r4(e4), size=target_size, mode='bilinear', align_corners=True)
         f_sem = F.interpolate(self.r_sem(i_feat), size=target_size, mode='bilinear', align_corners=True)
 
         return self.fuse(torch.cat([f1, f2, f3, f4, f_sem], dim=1))
 
 
 # ---------------------------------------------------------------------------
-# Full Network: Enhanced Tiny PID-UNet (< 1M Parameters, Flagship Version 3)
+# Full Network: Enhanced Tiny PID-UNet (< 1M Parameters, Flagship Version 5)
 # ---------------------------------------------------------------------------
 
 @register_model('pid_unet')
 class EnhancedTinyPIDUNet(nn.Module):
     """
     Enhanced Tiny PID-UNet for High-Precision Polyp Segmentation (< 1M Parameters).
-    Flagship Version 4 — Key upgrades over v3:
-    - SoftPIDBAG: Learnable soft gate (alpha=0.35) replaces hard sal gate, fixes ColonDB/CVC-300.
-    - 4-Scale Boundary Branch: Adds e4 for mid-to-large polyp boundary cues.
-    - Bottleneck dilations (1, 3, 6, 12): Wider receptive field for large polyps.
-    Total Parameters: ~0.839M (< 1.0M).
+    Flagship Version 5:
+    - SoftPIDBAG v5: Soft-gated derivative prevents silencing diminutive lesions in ETIS.
+    - Hybrid RFB Bottleneck: Multi-scale dilations (1, 2, 4, 8) + Global Context Pooling.
+    - 5-Scale Boundary Branch: Multi-resolution lesion boundary detection.
+    Total Parameters: ~0.805M (< 1.0M).
     """
     def __init__(self, in_channels: int = 3, n_classes: int = 1, base_c: int = 32):
         super().__init__()
@@ -355,14 +362,13 @@ class EnhancedTinyPIDUNet(nn.Module):
         self.enc4 = AsymmetricRFB(c4, c4, dilations=(1, 2, 4))
         self.down4 = InfoPreservingDownsample(c4, c5)
 
-        # ----------------- Integral Context Bottleneck (Dilations 1, 3, 6, 12 + Dropout) ----
-        # Using (1, 3, 6, 12) instead of (1, 2, 4, 8) for wider receptive field on large polyps
-        self.bottleneck = AsymmetricRFB(c5, c5, dilations=(1, 3, 6, 12), dropout_p=0.05)
+        # ----------------- Hybrid Bottleneck (Dilations 1, 2, 4, 8 + Global Context) ------
+        self.bottleneck = AsymmetricRFB(c5, c5, dilations=(1, 2, 4, 8), dropout_p=0.05, use_global=True)
 
-        # ----------------- 4-Scale Derivative Boundary Stream (e1, e2, e3, e4, i_feat) -----
+        # ----------------- 5-Scale Derivative Boundary Stream (e1, e2, e3, e4, i_feat) -----
         self.boundary_branch = SemanticBoundaryBranch(c1, c2, c3, c4, c5, d_channels=24)
 
-        # ----------------- Decoder with Soft Semantic PID Attention (SoftPIDBAG) -----------
+        # ----------------- Decoder with Soft Semantic PID Attention (SoftPIDBAG v5) --------
         self.bag4 = SoftPIDBAG(p_channels=c4, i_channels=c5, out_channels=c4)
         self.bag3 = SoftPIDBAG(p_channels=c3, i_channels=c4, out_channels=c3)
         self.bag2 = SoftPIDBAG(p_channels=c2, i_channels=c3, out_channels=c2)
@@ -384,10 +390,10 @@ class EnhancedTinyPIDUNet(nn.Module):
         e3 = self.enc3(self.down2(e2)) # (B, 96, H/4, W/4)
         e4 = self.enc4(self.down3(e3)) # (B, 128, H/8, W/8)
 
-        # 2. Integral (I) Context Bottleneck (Dilations 1, 3, 6, 12)
+        # 2. Hybrid Context Bottleneck (Dilations 1, 2, 4, 8 + Global Image Pooling)
         i_feat = self.bottleneck(self.down4(e4)) # (B, 192, H/16, W/16)
 
-        # 3. 4-Scale Semantic Boundary Map (e1, e2, e3, e4, i_feat)
+        # 3. 5-Scale Semantic Boundary Map (e1, e2, e3, e4, i_feat)
         b_map = self.boundary_branch(e1, e2, e3, e4, i_feat) # (B, 1, H/2, W/2)
 
         # 4. Decoder with Soft Semantic PID Attention
