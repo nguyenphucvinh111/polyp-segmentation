@@ -123,27 +123,27 @@ class PAPPM(nn.Module):
             nn.Conv2d(in_channels, branch_planes, kernel_size=1, bias=False)
         )
         self.scale1 = nn.Sequential(
-            nn.AvgPool2d(kernel_size=5, stride=2, padding=2),
             nn.BatchNorm2d(in_channels),
             nn.ReLU(inplace=False),
+            nn.AvgPool2d(kernel_size=5, stride=2, padding=2),
             nn.Conv2d(in_channels, branch_planes, kernel_size=1, bias=False)
         )
         self.scale2 = nn.Sequential(
-            nn.AvgPool2d(kernel_size=9, stride=4, padding=4),
             nn.BatchNorm2d(in_channels),
             nn.ReLU(inplace=False),
+            nn.AvgPool2d(kernel_size=9, stride=4, padding=4),
             nn.Conv2d(in_channels, branch_planes, kernel_size=1, bias=False)
         )
         self.scale3 = nn.Sequential(
-            nn.AvgPool2d(kernel_size=17, stride=8, padding=8),
             nn.BatchNorm2d(in_channels),
             nn.ReLU(inplace=False),
+            nn.AvgPool2d(kernel_size=17, stride=8, padding=8),
             nn.Conv2d(in_channels, branch_planes, kernel_size=1, bias=False)
         )
         self.scale4 = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
             nn.BatchNorm2d(in_channels),
             nn.ReLU(inplace=False),
+            nn.AdaptiveAvgPool2d((1, 1)),
             nn.Conv2d(in_channels, branch_planes, kernel_size=1, bias=False)
         )
 
