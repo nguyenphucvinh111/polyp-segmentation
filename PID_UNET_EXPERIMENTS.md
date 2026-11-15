@@ -1,5 +1,11 @@
 # PID-UNet v2 experiments
 
+Controlled study of the original v2: [ablation plan and commands](PID_UNET_V2_ABLATION.md)
+and [Colab notebook](https://colab.research.google.com/github/nguyenphucvinh111/polyp-segmentation/blob/main/pid_unet_v2_ablation_colab.ipynb).
+Six configurations isolate global context, D fusion, adaptive gains, boundary
+guidance and the gate floor. This study preserves every loss term, including
+boundary supervision, and supports three matched seeds with persistent resume.
+
 Current architecture experiment: [PID-UNet v2 OS8](PID_UNET_V2_OS8.md), retaining
 v2's deepest semantic features at output stride 8 with compensated dilation.
 It keeps 835,373 parameters and the original v2 loss/training recipe, without

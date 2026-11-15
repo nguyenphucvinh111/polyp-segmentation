@@ -29,6 +29,7 @@ edge_exports/*
 ref_repos/
 Ref/
 audit/
+ablation_runs/
 
 # IDE / OS
 .vscode/
