@@ -1,9 +1,12 @@
 # PID-UNet v2 experiments
 
-Current architecture experiment: [PID-UNet v10](PID_UNET_V10.md), a cross-scale
-spatial context bridge added to the original v2 after analyzing v8/v9 checkpoints.
-It trains from scratch with the same loss and training settings; superiority
-over EDANet has not been measured. [v8 and v9](PID_UNET_V8_V9.md) remain available.
+Current architecture experiment: [PID-UNet v2 OS8](PID_UNET_V2_OS8.md), retaining
+v2's deepest semantic features at output stride 8 with compensated dilation.
+It keeps 835,373 parameters and the original v2 loss/training recipe, without
+pretraining. Full-run accuracy has not been measured. The supplied
+[v10](PID_UNET_V10.md) run reached CVC-300 Dice 0.8132, below v2's 0.8294;
+OS8 is a separate experiment, not a rename of v10.
+[v8 and v9](PID_UNET_V8_V9.md) remain available.
 [v7](PID_UNET_V7.md) and [v2 Plus](PID_UNET_V2_PLUS.md) remain available. Earlier variants below
 are retained for comparison; their names and checkpoints are unchanged.
 

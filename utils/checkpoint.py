@@ -33,6 +33,7 @@ class Checkpointer:
         state = {
             'epoch': epoch,
             'model_name': self.model_name,
+            'model_architecture': getattr(model, 'checkpoint_architecture', None),
             'state_dict': model.state_dict(),
             'optimizer': optimizer.state_dict() if optimizer else None,
             'metrics': metrics,
@@ -56,6 +57,17 @@ class Checkpointer:
             print(f"[Checkpointer] Saved periodic snapshot to '{periodic_path}'.")
 
     @staticmethod
+    def _validate_architecture(model, checkpoint):
+        expected = getattr(model, 'checkpoint_architecture', None)
+        saved = checkpoint.get('model_architecture') if isinstance(checkpoint, dict) else None
+        if saved != expected:
+            raise ValueError(
+                f"Checkpoint architecture {saved!r} does not match {model.__class__.__name__} "
+                f"({expected!r}). Use a checkpoint from the same architecture. "
+                "Train a new model without --resume; keep checkpoint architecture metadata."
+            )
+
+    @staticmethod
     def load(model, path: str, device=None, optimizer=None, trainer=None):
         """
         Load weights safely handling raw state_dict, wrapped state_dict, or 'module.' prefixes.
@@ -64,6 +76,9 @@ class Checkpointer:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         checkpoint = torch.load(path, map_location=device)
+        # Check before mutating weights or optimizer: stride-only variants can
+        # have exactly the same tensor names/shapes as their parent network.
+        Checkpointer._validate_architecture(model, checkpoint)
 
         if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
             sd = checkpoint['state_dict']
@@ -123,18 +138,23 @@ class Checkpointer:
     def get_best_path(self) -> str:
         return os.path.join(self.save_dir, "best.pth")
 
-    def restore_best(self, resume_path, resumed_epoch, resumed_metrics):
+    def restore_best(self, resume_path, resumed_epoch, resumed_metrics, model=None):
         """Track the best file actually available, including after an interrupted save."""
         best_path = self.get_best_path()
+        source = best_path
         if not os.path.isfile(best_path):
             source_best = os.path.join(os.path.dirname(os.path.abspath(resume_path)), 'best.pth')
             if os.path.isfile(source_best):
-                shutil.copy2(source_best, best_path)
+                source = source_best
             else:
-                shutil.copy2(resume_path, best_path)
+                source = resume_path
                 print('[Resume] Historical best unavailable; using resumed weights as the initial best candidate.')
         # best.pth may be newer than last.pth if writing last was interrupted.
         # Trust the metrics of the stored best weights, not last's cached best_dice.
-        best = torch.load(best_path, map_location='cpu')
+        best = torch.load(source, map_location='cpu')
+        if model is not None:
+            self._validate_architecture(model, best)
+        if os.path.abspath(source) != os.path.abspath(best_path):
+            shutil.copy2(source, best_path)
         self.best_dice = best.get('metrics', {}).get('mDice', resumed_metrics.get('mDice', 0.0))
         self.best_epoch = best.get('epoch', resumed_epoch)

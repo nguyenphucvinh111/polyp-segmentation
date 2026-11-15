@@ -171,7 +171,7 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
             model, args.resume, device=device, optimizer=optimizer, trainer=trainer
         )
         start_epoch = resumed_epoch + 1
-        checkpointer.restore_best(args.resume, resumed_epoch, resumed_metrics)
+        checkpointer.restore_best(args.resume, resumed_epoch, resumed_metrics, model=model)
         print(f"[Resume] Resumed from epoch {resumed_epoch} "
               f"(best mDice so far: {checkpointer.best_dice:.4f}). "
               f"Continuing from epoch {start_epoch}.")
