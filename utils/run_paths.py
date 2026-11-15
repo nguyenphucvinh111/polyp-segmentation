@@ -23,6 +23,7 @@ def check_run_destination(log_root, snapshot_root, tag, resume=None):
         return
     occupied = [Path(log_root) / tag / 'train_log.csv',
                 Path(snapshot_root) / tag / 'best.pth',
+                Path(snapshot_root) / tag / f'best_{tag}.pth',
                 Path(snapshot_root) / tag / 'last.pth']
     if any(path.exists() for path in occupied):
         raise FileExistsError(

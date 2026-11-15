@@ -160,7 +160,8 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
 
     # 4. Logger, Checkpointer, and Evaluator
     logger = Logger(log_dir=log_root, model_name=tag)
-    checkpointer = Checkpointer(save_dir=snapshot_root, model_name=tag)
+    checkpointer = Checkpointer(save_dir=snapshot_root, model_name=tag,
+                                save_periodic=not getattr(args, 'no_periodic', False))
     val_evaluator = Evaluator(data_root=data_root, model=model, device=device, testsize=args.trainsize)
     trainer = Trainer(model, optimizer, loss_fn, args, logger, checkpointer)
 
@@ -254,6 +255,8 @@ def main():
                         help='Batch size (default: 8 to prevent CUDA OOM on Colab T4)')
     parser.add_argument('--epochs', type=int, default=100, help='Total training epochs')
     parser.add_argument('--data_root', type=str, default='./data', help='Dataset root path')
+    parser.add_argument('--no_periodic', action='store_true', default=False,
+                        help='Disable periodic snapshots every 10 epochs, keeping only the best checkpoint')
     parser.add_argument('--resume', type=str, default=None,
                         help='Path to checkpoint (.pth) to resume training from.')
     args = parser.parse_args()
