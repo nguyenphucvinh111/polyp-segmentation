@@ -21,6 +21,7 @@ import torch.nn.functional as F
 
 from models import register_model
 from models.pid_unet_v2 import PIDUNetV2, BoundedPIDBlock
+from models._hardgate_v2 import PIDUNetV2 as FrozenHardgateV2
 
 
 # ===========================================================================
@@ -187,7 +188,7 @@ class PIDUNetV2_Static(PIDUNetV2):
 
 
 @register_model("pid_unet_v2_hardgate")
-class PIDUNetV2_HardGate(PIDUNetV2):
+class PIDUNetV2_HardGate(FrozenHardgateV2):
     """Ablation: Hard Saliency Gating (gate = sal) without learned soft baseline floor."""
     def __init__(self):
         super().__init__(bounded_gates=False, global_context=True)

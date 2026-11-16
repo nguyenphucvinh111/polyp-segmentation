@@ -9,4 +9,6 @@ PID_V2_MODELS = frozenset({
     # Ablation variants
     "pid_unet_v2_nogc", "pid_unet_v2_nobound", "pid_unet_v2_nod", "pid_unet_v2_noi",
     "pid_unet_v2_static", "pid_unet_v2_hardgate", "pid_unet_v2_stddown",
-}) | frozenset(MODEL_NAMES.values())
+}) | frozenset(MODEL_NAMES.values()) | frozenset(
+    'pid_hardgate_ablation_' + variant for variant in
+    ('full', 'soft_floor', 'no_derivative', 'fixed_gains', 'no_boundary_gate', 'no_global'))
