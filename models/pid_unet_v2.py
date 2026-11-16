@@ -29,7 +29,7 @@ class GlobalContext(nn.Module):
 @register_model("pid_unet_v2")
 class PIDUNetV2(EnhancedTinyPIDUNet):
     def __init__(self, bounded_gates=True, global_context=True):
-        super().__init__()
+        super().__init__(legacy_v2=True)
         if bounded_gates:
             for name in ("bag1", "bag2", "bag3", "bag4"):
                 block = getattr(self, name)

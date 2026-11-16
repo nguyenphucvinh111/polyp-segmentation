@@ -61,6 +61,22 @@ class V2AblationTests(unittest.TestCase):
             self.assertIn(name, PID_V2_MODELS)
             self.assertEqual(get_model(name).variant, variant)
 
+    def test_v2_keeps_historical_backbone_and_handles_singleton_batch(self):
+        from models.pid_unet import EnhancedTinyPIDUNet
+        model = PIDUNetV2().train()
+        self.assertEqual(sum(p.numel() for p in model.parameters()), 835373)
+        self.assertFalse(model.bottleneck[0].use_global)
+        rates = [branch[3].conv1.dilation[0] for branch in model.bottleneck[0].branches]
+        self.assertEqual(rates, [1, 3, 6, 12])
+        outputs, boundary = model(torch.randn(1, 3, 64, 64), return_aux=True)
+        (sum(output.square().mean() for output in outputs) + boundary.square().mean()).backward()
+        self.assertTrue(torch.isfinite(model.inc[0].weight.grad).all())
+        # Preserve the independently updated unversioned pid_unet default.
+        latest = EnhancedTinyPIDUNet()
+        self.assertTrue(latest.bottleneck.use_global)
+        self.assertEqual([branch[3].conv1.dilation[0] for branch in latest.bottleneck.branches],
+                         [1, 2, 4, 8])
+
     def test_boundary_guidance_removed_only_where_requested(self):
         for variant in ('full', 'no_derivative', 'no_boundary_gate', 'no_gate_floor'):
             with self.subTest(variant=variant):

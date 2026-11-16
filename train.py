@@ -136,7 +136,10 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
     if args.model in PID_V2_MODELS:
         train_ds.aug.copypaste_prob = 0
     train_loader = DataLoader(Subset(train_ds, train_ids), batch_size=args.batchsize,
-                              shuffle=True, num_workers=num_workers, pin_memory=True, drop_last=True)
+                              shuffle=True, num_workers=num_workers, pin_memory=True,
+                              # v2 has no BN after global pooling and historically
+                              # trains the last singleton batch (164 updates/epoch).
+                              drop_last=args.model not in PID_V2_MODELS)
     val_loader = DataLoader(Subset(val_ds, val_ids), batch_size=args.batchsize,
                             shuffle=False, num_workers=num_workers)
     with open(log_root / f'{tag}_config.json', 'w', encoding='utf-8') as handle:

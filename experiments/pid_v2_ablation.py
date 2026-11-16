@@ -18,7 +18,7 @@ PROTOCOL = {
     'version': 1, 'loss': 'structure_loss', 'boundary_weight': 0.2,
     'lr': 3e-4, 'weight_decay': 1e-4, 'scheduler': 'cosine',
     'warmup_epochs': 5, 'resolution': 352, 'clip': 0.5,
-    'multiscale': [0.75, 1.0, 1.25], 'amp': True, 'tta': False,
+    'multiscale': [0.75, 1.0, 1.25], 'amp': True, 'tta': False, 'drop_last': False,
     'pretrained': False, 'split_seed': 42, 'validation_fraction': 0.1,
     'checkpoint_selection': 'validation_mDice',
 }

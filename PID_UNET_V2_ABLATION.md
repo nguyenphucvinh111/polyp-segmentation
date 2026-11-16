@@ -19,6 +19,14 @@ kiến trúc, chưa phải kết quả chứng minh model vượt EDANet.
 Kiến trúc, loss, train/evaluation của `pid_unet_v2` gốc được giữ nguyên. Các
 model ablation có tên và checkpoint riêng. Tất cả train từ đầu, không pretrain.
 
+Khi tích hợp, GitHub đã có bản cập nhật cho `pid_unet` không đánh số phiên bản:
+bottleneck đổi sang (1,2,4,8) và thêm nhánh global pooling. Vì v2 kế thừa lớp cha
+này, study thêm chế độ tương thích `legacy_v2=True` để giữ bottleneck v2
+(1,3,6,12), cấu trúc checkpoint và khởi tạo cũ. `pid_unet` mới và các model
+đối thủ vừa được thêm vẫn được giữ. Đã đối chiếu riêng cả bốn tổ hợp tùy chọn
+constructor của v2 với snapshot trước khi tích hợp, không chỉ so control với
+một v2 đã vô tình bị thay đổi.
+
 ## Sáu cấu hình
 
 | Mã | Model dùng trong train.py | Thay đổi duy nhất so với full | Tham số |
@@ -67,6 +75,8 @@ khiển có tích phân theo thời gian.
 
 - AdamW, lr 0.0003, weight decay 0.0001; 5 epoch warmup, cosine; 100 epochs.
 - Batch 8; input 352; stochastic multiscale 0.75/1/1.25; AMP trên CUDA.
+  Giữ batch cuối như v2 gốc (`drop_last=False`): 164 cập nhật mỗi epoch.
+  Các model ngoài họ v2 vẫn dùng cách xử lý batch cuối của bản cập nhật mới.
 - Bốn structure-loss segmentation và **loss biên BCE + Dice hiện có × 0.2**.
   Không thay loss, trọng số hay số head supervision.
 - Augmentation hiện có, copy-paste tắt như v2.
