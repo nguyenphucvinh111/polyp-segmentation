@@ -13,12 +13,13 @@ import torch
 class Checkpointer:
     """Manages saving and loading model checkpoints."""
 
-    def __init__(self, save_dir: str = './snapshots', model_name: str = 'pranet'):
+    def __init__(self, save_dir: str = './snapshots', model_name: str = 'pranet', save_periodic: bool = True):
         self.save_dir = os.path.join(save_dir, model_name)
         os.makedirs(self.save_dir, exist_ok=True)
         self.model_name = model_name
         self.best_dice = -1.0
         self.best_epoch = 0
+        self.save_periodic = save_periodic
 
     @staticmethod
     def _save_file(state, path):
@@ -44,14 +45,16 @@ class Checkpointer:
 
         # Save best model
         if improved:
-            best_path = os.path.join(self.save_dir, "best.pth")
-            self._save_file(state, best_path)
+            named_best = os.path.join(self.save_dir, f"best_{self.model_name}.pth")
+            legacy_best = os.path.join(self.save_dir, "best.pth")
+            self._save_file(state, named_best)
+            self._save_file(state, legacy_best)
             self.best_dice = current_dice
             self.best_epoch = epoch
-            print(f"[Checkpointer] New best model at epoch {epoch} with mDice={current_dice:.4f} -> Saved to '{best_path}'.")
+            print(f"[Checkpointer] New best model at epoch {epoch} with mDice={current_dice:.4f} -> Saved to '{named_best}'.")
 
         self._save_file(state, os.path.join(self.save_dir, 'last.pth'))
-        if epoch % 10 == 0:
+        if self.save_periodic and epoch % 10 == 0:
             periodic_path = os.path.join(self.save_dir, f"{self.model_name}-{epoch}.pth")
             self._save_file(state, periodic_path)
             print(f"[Checkpointer] Saved periodic snapshot to '{periodic_path}'.")
@@ -136,6 +139,9 @@ class Checkpointer:
         return epoch, metrics
 
     def get_best_path(self) -> str:
+        named_best = os.path.join(self.save_dir, f"best_{self.model_name}.pth")
+        if os.path.isfile(named_best):
+            return named_best
         return os.path.join(self.save_dir, "best.pth")
 
     def restore_best(self, resume_path, resumed_epoch, resumed_metrics, model=None):
