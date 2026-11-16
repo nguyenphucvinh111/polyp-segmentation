@@ -139,9 +139,6 @@ class Checkpointer:
         return epoch, metrics
 
     def get_best_path(self) -> str:
-        named_best = os.path.join(self.save_dir, f"best_{self.model_name}.pth")
-        if os.path.isfile(named_best):
-            return named_best
         return os.path.join(self.save_dir, "best.pth")
 
     def restore_best(self, resume_path, resumed_epoch, resumed_metrics, model=None):
@@ -162,5 +159,8 @@ class Checkpointer:
             self._validate_architecture(model, best)
         if os.path.abspath(source) != os.path.abspath(best_path):
             shutil.copy2(source, best_path)
+        named_best = os.path.join(self.save_dir, f"best_{self.model_name}.pth")
+        if os.path.isfile(best_path):
+            shutil.copy2(best_path, named_best)
         self.best_dice = best.get('metrics', {}).get('mDice', resumed_metrics.get('mDice', 0.0))
         self.best_epoch = best.get('epoch', resumed_epoch)

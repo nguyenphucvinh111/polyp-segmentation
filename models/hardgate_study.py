@@ -6,7 +6,7 @@ from torch.nn import functional as F
 from models import register_model
 from models.pid_unet_z_hardgate import PIDUNetV2_HardGate, HardGatePIDBlock
 
-VARIANTS = ('full', 'soft_floor', 'no_derivative', 'fixed_gains', 'no_boundary_gate', 'no_global')
+VARIANTS = ('full', 'soft_floor', 'no_derivative', 'no_integral', 'fixed_gains', 'no_boundary_gate', 'no_global', 'no_boundary_loss')
 
 class StudyBlock(HardGatePIDBlock):
     def forward(self, p_feat, i_feat, boundary_map):
@@ -21,6 +21,8 @@ class StudyBlock(HardGatePIDBlock):
         d = d * (1 if self.variant == 'no_boundary_gate' else boundary_map.sigmoid())
         if self.variant == 'no_derivative':
             d = torch.zeros_like(d)
+        if self.variant == 'no_integral':
+            i = torch.zeros_like(i)
         kp, ki, kd = (1/3, 1/3, 1/3) if self.variant == 'fixed_gains' else self.pid_gate(i_feat)
         return self.fuse(self.se(kp*p*gate + ki*i + kd*d)) + i
 
@@ -32,7 +34,7 @@ class HardgateStudy(PIDUNetV2_HardGate):
         if variant == 'no_global':
             # Only remove the additive v2 context; hybrid RFB pooling stays.
             self.bottleneck[1] = nn.Identity()
-        elif variant != 'full':
+        elif variant not in ('full', 'no_boundary_loss'):
             with torch.random.fork_rng(devices=[]):
                 for name in ('bag1','bag2','bag3','bag4'):
                     old = getattr(self, name)

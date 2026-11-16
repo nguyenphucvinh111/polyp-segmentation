@@ -65,13 +65,14 @@ def ensure_study(root, identity, provenance):
 
 
 def train_command(args, variant, seed, resume=None):
+    boundary_weight = 0.0 if variant == 'no_boundary_loss' else PROTOCOL['boundary_weight']
     command = [sys.executable, '-u', str(REPO / 'train.py'),
                '--model', MODEL_NAMES[variant], '--seeds', str(seed),
                '--run_name', run_tag(variant, seed), '--loss', PROTOCOL['loss'],
                '--epochs', str(args.epochs), '--batchsize', str(args.batchsize),
                '--lr', str(PROTOCOL['lr']), '--weight_decay', str(PROTOCOL['weight_decay']),
                '--scheduler', PROTOCOL['scheduler'], '--warmup_epochs', '5',
-               '--boundary_weight', str(PROTOCOL['boundary_weight']),
+               '--boundary_weight', str(boundary_weight),
                '--output_root', str(Path(args.output_root).resolve()),
                '--data_root', str(Path(args.data_root).resolve())]
     if resume:

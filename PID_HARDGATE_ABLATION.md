@@ -11,13 +11,15 @@ Notebook người dùng cung cấp chỉ có lệnh `train.py --model pid_unet_v
 | full | Control hardgate |
 | soft_floor | Thêm floor học được 0.6 sigmoid(alpha), khởi tạo 0.35 |
 | no_derivative | D = 0, giữ softmax ba gains, không chuẩn hóa lại P/I |
+| no_integral | I = 0, loại bỏ ngữ cảnh sâu tích lũy trong PID block (đánh giá P+D) |
 | fixed_gains | Kp = Ki = Kd = 1/3 |
 | no_boundary_gate | Bỏ multiplier sigmoid(boundary) trong D |
 | no_global | Bỏ GlobalContext cộng thêm; vẫn giữ global pooling bên trong hybrid RFB |
+| no_boundary_loss | Giữ nguyên kiến trúc control nhưng tắt loss biên phụ trợ (boundary_weight = 0.0) |
 
 Tên model là `pid_hardgate_ablation_<variant>`. Mỗi variant khởi tạo đầy đủ control trước khi thay thành phần; trọng số chung và RNG khởi tạo giống nhau theo seed. Các tham số không hoạt động như alpha trong hardgate hoặc controller trong fixed_gains vẫn được giữ để cô lập tác động hàm forward; không diễn giải số tham số là chi phí triển khai tối thiểu.
 
-Giữ structure loss bốn head và loss biên hiện có ×0.2, AdamW 3e-4, warmup 5, cosine 100 epochs, batch 8, multiscale 352, AMP, TTA tắt, train từ đầu. Theo source hardgate được tham chiếu, `drop_last=True` (163 updates với 1305 ảnh train). Điều này cũng tránh BatchNorm trên global pooling với batch cuối chỉ một ảnh. Split cố định 1305/145 từ TrainDataset; checkpoint chọn theo validation Dice.
+Giữ structure loss bốn head và loss biên hiện có ×0.2 (ngoại trừ variant `no_boundary_loss` dùng 0.0), AdamW 3e-4, warmup 5, cosine 100 epochs, batch 8, multiscale 352, AMP, TTA tắt, train từ đầu. Theo source hardgate được tham chiếu, `drop_last=True` (163 updates với 1305 ảnh train). Điều này cũng tránh BatchNorm trên global pooling với batch cuối chỉ một ảnh. Split cố định 1305/145 từ TrainDataset; checkpoint chọn theo validation Dice.
 
 Sau khi mount Drive và setup repo:
 
@@ -31,7 +33,7 @@ Sau đó bổ sung hai seed cho TẤT CẢ các hàng:
 python run_hardgate_ablation.py --seeds 42 3407 1234 --output_root /content/drive/MyDrive/pid_hardgate_ablation_v1
 ```
 
-Tổng cộng 18 runs. Run hoàn tất được bỏ qua, run dở được resume. Chỉ một runner ghi vào thư mục tại một thời điểm. Source, phiên bản runtime, nội dung dữ liệu và split được khóa trong manifest; không trộn với study v2 cũ. Cần giữ nguyên toàn bộ thư mục Drive, đặc biệt best/last checkpoint, config, manifest, metrics và logs.
+Tổng cộng 8 variants × 3 seeds = 24 runs (hoặc 8 runs cho seed 42 ban đầu). Run hoàn tất được bỏ qua, run dở được resume. Chỉ một runner ghi vào thư mục tại một thời điểm. Source, phiên bản runtime, nội dung dữ liệu và split được khóa trong manifest; không trộn với study v2 cũ. Cần giữ nguyên toàn bộ thư mục Drive, đặc biệt best/last checkpoint, config, manifest, metrics và logs.
 
 ```bash
 python summarize_hardgate_ablation.py --seeds 42 3407 1234 --output_root /content/drive/MyDrive/pid_hardgate_ablation_v1

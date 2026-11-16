@@ -4,9 +4,11 @@ VARIANTS = {
     'full': 'Frozen hardgate hybrid-bottleneck control',
     'no_global': 'Remove additive global context at bottleneck',
     'no_derivative': 'Set D contribution to zero; keep three-way gain softmax',
+    'no_integral': 'Set I contribution to zero; evaluate Proportional + Derivative only',
     'fixed_gains': 'Replace adaptive gains with Kp = Ki = Kd = 1/3',
     'no_boundary_gate': 'Replace boundary multiplier in D with one',
     'soft_floor': 'Add a learned bounded floor initialized at 0.35',
+    'no_boundary_loss': 'Train full control without boundary supervision (boundary_weight=0.0)',
 }
 MODEL_NAMES = {key: 'pid_hardgate_ablation_' + key for key in VARIANTS}
 TEST_COUNTS = {'CVC-300': 60, 'CVC-ClinicDB': 62, 'CVC-ColonDB': 380,
