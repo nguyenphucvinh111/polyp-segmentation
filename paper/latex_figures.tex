@@ -1,0 +1,246 @@
+% ============================================================
+%  PID-UNet: LaTeX / TikZ figures for IEEE / MICCAI submission
+%  Requires packages: tikz, pgf, amsmath, xcolor
+%  Add to preamble:
+%    \usepackage{tikz}
+%    \usetikzlibrary{arrows.meta, positioning, shapes.geometric,
+%                    fit, backgrounds, calc, decorations.pathreplacing}
+%    \usepackage{xcolor}
+% ============================================================
+
+% ----------------------------------------------------------------
+%  FIGURE 1 : Overall PID-UNet Architecture
+% ----------------------------------------------------------------
+\begin{figure*}[t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >=Stealth,
+  % --- node styles ---
+  blk/.style   = {draw, rounded corners=3pt, minimum width=1.8cm, minimum height=0.7cm,
+                   align=center, text=white, inner sep=3pt},
+  enc/.style    = {blk, fill=teal!50!black, draw=teal!70!white},
+  ipd/.style    = {blk, fill=blue!40!black,  draw=blue!60!white,
+                   minimum height=0.5cm},
+  bottle/.style = {blk, fill=red!50!black,   draw=red!70!white,
+                   minimum width=2.4cm, minimum height=1.1cm},
+  pid/.style    = {blk, fill=orange!40!black, draw=orange!80!white,
+                   minimum width=2.0cm, minimum height=1.0cm},
+  sbs/.style    = {blk, fill=violet!50!black, draw=violet!60!white,
+                   minimum width=2.4cm, minimum height=0.9cm},
+  head/.style   = {blk, fill=green!40!black,  draw=green!60!white,
+                   minimum width=1.4cm, minimum height=0.5cm},
+  inp/.style    = {blk, fill=gray!30!black,   draw=gray!60!white},
+  % --- arrow styles ---
+  main/.style  = {->, thick, blue!60!white},
+  skip/.style  = {->, thick, orange!70!white, dashed},
+  bnd/.style   = {->, thick, violet!70!white, dotted},
+]
+
+%% ---- INPUT ----
+\node[inp] (input) {Input\\$3\!\times\!352\!\times\!352$};
+
+%% ---- ENCODER (vertical column, top to bottom) ----
+\node[enc, below=0.3cm of input]  (stem)  {Stem\\Conv3×3·BN·ReLU};
+\node[ipd, below=0.2cm of stem]   (ipd1)  {IPD$_1$ $\downarrow$2};
+\node[enc, below=0.2cm of ipd1]   (enc1)  {Enc$_1$ AsymRFB\\d=(1,2) 32ch};
+\node[ipd, below=0.2cm of enc1]   (ipd2)  {IPD$_2$ $\downarrow$2};
+\node[enc, below=0.2cm of ipd2]   (enc2)  {Enc$_2$ AsymRFB\\d=(1,2,4) 64ch};
+\node[ipd, below=0.2cm of enc2]   (ipd3)  {IPD$_3$ $\downarrow$2};
+\node[enc, below=0.2cm of ipd3]   (enc3)  {Enc$_3$ AsymRFB\\d=(1,2,4) 96ch};
+\node[ipd, below=0.2cm of enc3]   (ipd4)  {IPD$_4$ $\downarrow$2};
+\node[enc, below=0.2cm of ipd4]   (enc4)  {Enc$_4$ AsymRFB\\d=(1,2,4) 128ch};
+\node[ipd, below=0.2cm of enc4]   (ipd5)  {IPD$_5$ $\downarrow$2};
+\node[bottle, below=0.2cm of ipd5] (bottleneck)
+      {HARF-GC\\AsymRFB d=(1,2,4,8)\\+GlobalContext 192ch};
+
+%% ---- BOUNDARY BRANCH ----
+\node[sbs, right=3.0cm of bottleneck, yshift=1.5cm] (sbs)
+      {SBS\\5-Scale Boundary Branch\\$e_1,e_2,e_3,e_4,\mathbf{I}\!\rightarrow\!1$ch};
+
+%% ---- DECODER (right column, bottom to top) ----
+\node[pid, right=5.5cm of enc4]  (d4) {SG-PID$_4$\\P=e4, I=i\_feat\\128ch};
+\node[pid, right=5.5cm of enc3]  (d3) {SG-PID$_3$\\P=e3, I=d4\\96ch};
+\node[pid, right=5.5cm of enc2]  (d2) {SG-PID$_2$\\P=e2, I=d3\\64ch};
+\node[pid, right=5.5cm of enc1]  (d1) {SG-PID$_1$\\P=e1, I=d2\\32ch};
+
+%% ---- HEADS + OUTPUT ----
+\node[head, right=0.4cm of d4] (h4) {Head$_4$\\Conv1×1};
+\node[head, right=0.4cm of d3] (h3) {Head$_3$\\Conv1×1};
+\node[head, right=0.4cm of d2] (h2) {Head$_2$\\Conv1×1};
+\node[head, right=0.4cm of d1] (h1) {Head$_1$\\Conv1×1};
+\node[inp, above=0.3cm of h1]  (output) {Output Mask\\$1\!\times\!352\!\times\!352$};
+
+%% ---- MAIN FLOW ARROWS (encoder) ----
+\draw[main] (input)      -- (stem);
+\draw[main] (stem)       -- (ipd1);
+\draw[main] (ipd1)       -- (enc1);
+\draw[main] (enc1)       -- (ipd2);
+\draw[main] (ipd2)       -- (enc2);
+\draw[main] (enc2)       -- (ipd3);
+\draw[main] (ipd3)       -- (enc3);
+\draw[main] (enc3)       -- (ipd4);
+\draw[main] (ipd4)       -- (enc4);
+\draw[main] (enc4)       -- (ipd5);
+\draw[main] (ipd5)       -- (bottleneck);
+
+%% ---- BOTTLENECK -> SBS ----
+\draw[main] (bottleneck) -- (sbs);
+
+%% ---- BOTTLENECK -> decoder (I path) ----
+\draw[main, bend left=20] (bottleneck) to (d4);
+
+%% ---- DECODER CHAIN ----
+\draw[main] (d4) -- (d3);
+\draw[main] (d3) -- (d2);
+\draw[main] (d2) -- (d1);
+
+%% ---- SKIP CONNECTIONS (encoder -> decoder P) ----
+\draw[skip] (enc4.east) -- (d4.west) node[midway, above, font=\tiny, text=orange!80!white]{e4 (P)};
+\draw[skip] (enc3.east) -- (d3.west) node[midway, above, font=\tiny, text=orange!80!white]{e3 (P)};
+\draw[skip] (enc2.east) -- (d2.west) node[midway, above, font=\tiny, text=orange!80!white]{e2 (P)};
+\draw[skip] (enc1.east) -- (d1.west) node[midway, above, font=\tiny, text=orange!80!white]{e1 (P)};
+
+%% ---- BOUNDARY MAP -> all decoder blocks ----
+\draw[bnd] (sbs) -- (d4) node[midway, right, font=\tiny, text=violet!80!white]{b\_map};
+\draw[bnd] (sbs) -- (d3);
+\draw[bnd] (sbs) -- (d2);
+\draw[bnd] (sbs) -- (d1);
+
+%% ---- ENCODER -> SBS ----
+\draw[bnd, bend right=15] (enc1.east) to[out=0,in=180] (sbs.west);
+\draw[bnd, bend right=10] (enc2.east) to[out=0,in=200] (sbs.west);
+\draw[bnd, bend right=5]  (enc3.east) to[out=0,in=210] (sbs.west);
+\draw[bnd]                (enc4.east) to[out=0,in=220] (sbs.west);
+
+%% ---- HEAD CONNECTIONS ----
+\draw[main] (d4) -- (h4);
+\draw[main] (d3) -- (h3);
+\draw[main] (d2) -- (h2);
+\draw[main] (d1) -- (h1);
+\draw[main] (h1) -- (output);
+
+%% ---- LEGEND ----
+\begin{scope}[shift={(0,-1.0)}]
+  \node[enc,  minimum width=1.0cm, minimum height=0.4cm] (leg1) at (0, -13.5)   {\tiny AsymRFB};
+  \node[ipd,  minimum width=1.0cm, minimum height=0.4cm] (leg2) at (1.6,-13.5)  {\tiny IPD};
+  \node[bottle,minimum width=1.0cm,minimum height=0.4cm] (leg3) at (3.2,-13.5)  {\tiny Bottleneck};
+  \node[pid,  minimum width=1.0cm, minimum height=0.4cm] (leg4) at (4.8,-13.5)  {\tiny SG-PID};
+  \node[sbs,  minimum width=1.0cm, minimum height=0.4cm] (leg5) at (6.4,-13.5)  {\tiny SBS};
+  \draw[main] (8.0,-13.5) -- ++(0.6,0) node[right,text=white,font=\tiny]{Main flow};
+  \draw[skip] (9.2,-13.5) -- ++(0.6,0) node[right,text=white,font=\tiny]{Skip (P)};
+  \draw[bnd]  (10.4,-13.5)-- ++(0.6,0) node[right,text=white,font=\tiny]{Boundary};
+\end{scope}
+
+\end{tikzpicture}
+}
+\caption{Overall architecture of PID-UNet. The encoder uses Information-Preserving Downsampling (IPD) and AsymmetricRFB blocks. The 5-Scale Semantic Boundary Branch (SBS) feeds a boundary map to all decoder SG-PID blocks. Each SG-PID block receives a skip feature (P, orange), deep context (I, blue), and the boundary map (purple).}
+\label{fig:architecture}
+\end{figure*}
+
+
+% ----------------------------------------------------------------
+%  FIGURE 2 : SG-PID Block Detail
+% ----------------------------------------------------------------
+\begin{figure}[t]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[
+  font=\scriptsize,
+  >=Stealth,
+  blk/.style={draw, rounded corners=3pt, align=center, text=white,
+               inner sep=4pt, minimum width=2.2cm, minimum height=0.75cm},
+  inp/.style ={blk, fill=gray!30!black,   draw=gray!60!white},
+  gate/.style={blk, fill=orange!35!black, draw=orange!70!white},
+  Pblk/.style={blk, fill=teal!40!black,   draw=teal!70!white},
+  Dblk/.style={blk, fill=purple!40!black, draw=purple!60!white},
+  Iblk/.style={blk, fill=blue!40!black,   draw=blue!70!white},
+  ctrl/.style={blk, fill=yellow!30!black, draw=yellow!60!white, minimum height=1.0cm},
+  fuse/.style={blk, fill=red!40!black,    draw=red!70!white,    minimum height=1.2cm},
+  out/.style ={blk, fill=green!35!black,  draw=green!60!white},
+  sum/.style ={circle, draw=white, fill=gray!40!black, minimum size=0.5cm,
+                text=white, font=\large},
+  main/.style={->, thick, blue!60!white},
+  gate_arr/.style={->, thick, orange!70!white, dashed},
+  bnd_arr/.style ={->, thick, violet!70!white, dotted},
+  res_arr/.style ={->, thick, cyan!60!white,   dashed},
+]
+
+%% ---- INPUTS ----
+\node[inp] (Pfeat) at (0, 0)    {$\mathbf{P}$\\(skip feat)};
+\node[inp] (Ifeat) at (0,-2.5)  {$\mathbf{I}$\\(deep context)};
+\node[inp] (bmap)  at (0,-5.0)  {$\mathbf{b}$\\(boundary map)};
+
+%% ---- PROJECTIONS ----
+\node[Pblk, right=1.0cm of Pfeat]  (projP) {Proj$_P$\\Conv1×1·BN·ReLU};
+\node[Iblk, right=1.0cm of Ifeat]  (projI) {Proj$_I$\\Conv1×1·BN·ReLU};
+
+\draw[main] (Pfeat) -- (projP);
+\draw[main] (Ifeat) -- (projI);
+
+%% ---- SALIENCY GATE ----
+\node[gate, right=1.5cm of Ifeat, yshift=1.0cm] (sg)
+      {Saliency Gate\\Conv$\to$BN$\to$ReLU$\to$Conv$\to\sigma$};
+\draw[main] (Ifeat.east) to[out=0,in=200] (sg.south west);
+\node[font=\tiny, text=orange!80!white, right=0.1cm of sg, yshift=-0.6cm]
+      {$G = \sigma(\mathrm{Conv}(\mathbf{I}))$};
+
+%% ---- P COMPONENT ----
+\node[Pblk, right=4.5cm of Pfeat, yshift=0.5cm] (Pcomp)
+      {P Component\\$\mathbf{P}_g = \mathrm{Proj}_P(\mathbf{P}) \odot G$};
+\draw[main]     (projP.east)   -- (Pcomp.west);
+\draw[gate_arr] (sg.east)      to[out=0,in=120] (Pcomp.north west);
+
+%% ---- D COMPONENT ----
+\node[Dblk, right=4.5cm of Ifeat] (Dcomp)
+      {D Component\\$|\mathbf{P}_g - \mathrm{AvgPool}(\mathbf{P}_g)|$\\$\odot\,\sigma(\mathbf{b})\odot G$};
+\draw[main]    (projP.east)   to[out=0,in=140] (Dcomp.north west);
+\draw[gate_arr](sg.east)      to[out=0,in=120] (Dcomp.north);
+\draw[bnd_arr] (bmap.east)    to[out=0,in=200] (Dcomp.south west);
+
+%% ---- I COMPONENT ----
+\node[Iblk, right=4.5cm of Ifeat, yshift=-1.5cm] (Icomp)
+      {I Component\\$\mathbf{I}_{\mathrm{proj}} = \mathrm{Proj}_I(\mathbf{I})$};
+\draw[main] (projI.east) -- (Icomp.west);
+
+%% ---- DYNAMIC CONTROLLER ----
+\node[ctrl, right=4.5cm of bmap] (ctrl)
+      {Dynamic Controller\\GAP($\mathbf{I}$)$\to$Linear$\to$\\ReLU$\to$Linear$\to$Softmax\\$(K_p, K_i, K_d)$};
+\draw[main] (Ifeat.south) to[out=270,in=180] (ctrl.west);
+
+%% ---- WEIGHTED SUM ----
+\node[sum, right=1.5cm of Dcomp] (sigma) {$\Sigma$};
+\node[font=\tiny,text=white,below=0.1cm of sigma]
+      {$K_p\!\cdot\!\mathbf{P}_g + K_i\!\cdot\!\mathbf{I} + K_d\!\cdot\!\mathbf{D}$};
+\draw[main]     (Pcomp.east) to[out=0,in=90]  (sigma.north);
+\draw[main]     (Dcomp.east)  --               (sigma.west);
+\draw[main]     (Icomp.east) to[out=0,in=270] (sigma.south);
+\draw[gate_arr] (ctrl.east)  to[out=0,in=200] (sigma.south west)
+                node[midway,below,font=\tiny,text=yellow!70!white]{$(K_p,K_i,K_d)$};
+
+%% ---- FUSE (SE + AsymConv) + RESIDUAL ----
+\node[fuse, right=1.5cm of sigma] (fuse)
+      {SE + AsymConv\\(3×1, 1×3)\\+ Residual ($\mathbf{I}_{\mathrm{proj}}$)};
+\draw[main] (sigma) -- (fuse);
+
+%% ---- RESIDUAL BYPASS ----
+\draw[res_arr] (projI.east) to[out=30,in=90] (fuse.north)
+               node[midway,above,font=\tiny,text=cyan!70!white]{residual};
+
+%% ---- OUTPUT ----
+\node[out, right=1.0cm of fuse] (output) {$d_{\mathrm{out}}$\\(refined feat)};
+\draw[main] (fuse) -- (output);
+
+%% ---- FORMULA BAR ----
+\node[draw=gray!40, fill=black!60, text=white, rounded corners=3pt,
+      align=center, minimum width=12cm, font=\tiny,
+      below=0.8cm of bmap]
+      (formula)
+      {$\text{SG-PID}(\mathbf{P},\mathbf{I},\mathbf{b}) = \text{AsymConv}\!\left(\text{SE}\!\left(K_p\!\cdot\!\mathbf{P}_g + K_i\!\cdot\!\mathbf{I}_{\text{proj}} + K_d\!\cdot\!\mathbf{D}\right)\right) + \mathbf{I}_{\text{proj}}$};
+
+\end{tikzpicture}
+}
+\caption{Detailed structure of the proposed SG-PID Block. The hard saliency gate $G=\sigma(\text{Conv}(\mathbf{I}))$ simultaneously suppresses background in the P component and modulates the boundary Laplacian in the D component. Dynamic gains $(K_p,K_i,K_d)$ adapt per-frame based on global image statistics.}
+\label{fig:sgpid}
+\end{figure}

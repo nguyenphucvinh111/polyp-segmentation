@@ -324,10 +324,13 @@ class SemanticBoundaryBranch(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Full Network: Enhanced Tiny PID-UNet (< 1M Parameters, Flagship Version 5)
+# Legacy Architecture: Enhanced Tiny PID-UNet (Version 5, ~0.805M)
+# Kept for historical ablation and regression test compatibility.
+# The official flagship model is PIDUNet (0.815M params) in models.pid_unet_v2_hardgate
 # ---------------------------------------------------------------------------
 
-@register_model('pid_unet')
+@register_model('enhanced_tiny_pid_unet')
+@register_model('pid_unet_v5')
 class EnhancedTinyPIDUNet(nn.Module):
     """
     Enhanced Tiny PID-UNet for High-Precision Polyp Segmentation (< 1M Parameters).
@@ -415,3 +418,10 @@ class EnhancedTinyPIDUNet(nn.Module):
         out1 = self.head1(d1)  # already (H, W)
 
         return ((out4, out3, out2, out1), b_map) if return_aux else (out4, out3, out2, out1)
+
+
+# Expose flagship PIDUNet (0.815M params) for unified access
+try:
+    from models.pid_unet_v2_hardgate import PIDUNet, PIDUNetV2_HardGate
+except ImportError:
+    pass

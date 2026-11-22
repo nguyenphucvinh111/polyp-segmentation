@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; padding: 24px; background: #ffffff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; }
+  svg { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .title { font-size: 16px; font-weight: 700; fill: #1e293b; text-anchor: middle; }
+  .subtitle { font-size: 11px; fill: #64748b; text-anchor: middle; }
+  .box-title { font-size: 11px; font-weight: 700; text-anchor: middle; }
+  .box-sub { font-size: 9.5px; text-anchor: middle; }
+  .box-formula { font-size: 10px; font-weight: 700; text-anchor: middle; font-family: "Courier New", monospace; }
+  .arrow { stroke: #2563eb; stroke-width: 1.8; fill: none; marker-end: url(#arrow-blue); }
+  .gate-arrow { stroke: #ea580c; stroke-width: 1.8; stroke-dasharray: 4,3; fill: none; marker-end: url(#arrow-orange); }
+  .bnd-arrow { stroke: #9333ea; stroke-width: 1.8; stroke-dasharray: 4,3; fill: none; marker-end: url(#arrow-purple); }
+  .res-arrow { stroke: #0284c7; stroke-width: 2.0; stroke-dasharray: 6,3; fill: none; marker-end: url(#arrow-sky); }
+  .gain-arrow { stroke: #ca8a04; stroke-width: 1.8; stroke-dasharray: 4,2; fill: none; marker-end: url(#arrow-yellow); }
+</style>
+</head>
+<body>
+<svg width="980" height="600" viewBox="0 0 980 600" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow-blue" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#2563eb"/></marker>
+    <marker id="arrow-orange" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#ea580c"/></marker>
+    <marker id="arrow-purple" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#9333ea"/></marker>
+    <marker id="arrow-sky" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#0284c7"/></marker>
+    <marker id="arrow-yellow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#ca8a04"/></marker>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-opacity="0.08"/></filter>
+  </defs>
+
+  <!-- TITLE -->
+  <text x="490" y="24" class="title">Figure 2: The Proposed Saliency-Gated PID (SG-PID) Block</text>
+  <text x="490" y="40" class="subtitle">Hard Saliency Gating (G = sal) · Boundary Modulation · Dynamic Self-Tuning PID Controller · Residual Highway</text>
+
+  <!-- ================= INPUTS ================= -->
+  <!-- Encoder Feature X -->
+  <g transform="translate(30, 80)" filter="url(#shadow)">
+    <rect width="120" height="46" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="60" y="20" class="box-title" fill="#0f172a">Encoder Feature</text>
+    <text x="60" y="34" class="box-sub" fill="#475569">X (Skip Connection)</text>
+  </g>
+
+  <!-- Deeper Decoder Feature C -->
+  <g transform="translate(30, 240)" filter="url(#shadow)">
+    <rect width="120" height="46" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="60" y="20" class="box-title" fill="#0f172a">Deeper Context</text>
+    <text x="60" y="34" class="box-sub" fill="#475569">C (from deeper stage)</text>
+  </g>
+
+  <!-- Boundary Prior B -->
+  <g transform="translate(30, 420)" filter="url(#shadow)">
+    <rect width="120" height="46" rx="6" fill="#faf5ff" stroke="#a855f7" stroke-width="1.5"/>
+    <text x="60" y="20" class="box-title" fill="#6b21a8">Boundary Stream</text>
+    <text x="60" y="34" class="box-sub" fill="#581c87">B (from 5-scale SBS)</text>
+  </g>
+
+  <!-- Proj P -->
+  <g transform="translate(180, 80)" filter="url(#shadow)">
+    <rect width="110" height="46" rx="6" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="55" y="20" class="box-title" fill="#15803d">Proj_P</text>
+    <text x="55" y="34" class="box-sub" fill="#166534">1×1 Conv · BN · ReLU</text>
+  </g>
+  <path d="M150, 103 L180, 103" class="arrow"/>
+
+  <!-- Proj I & Resize -->
+  <g transform="translate(180, 240)" filter="url(#shadow)">
+    <rect width="110" height="46" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="55" y="19" class="box-title" fill="#1d4ed8">Proj_I &amp; Resize</text>
+    <text x="55" y="33" class="box-sub" fill="#1e40af">Bilinear Interp + 1×1</text>
+  </g>
+  <path d="M150, 263 L180, 263" class="arrow"/>
+
+  <!-- Resize B -->
+  <g transform="translate(180, 420)" filter="url(#shadow)">
+    <rect width="110" height="46" rx="6" fill="#faf5ff" stroke="#a855f7" stroke-width="1.5"/>
+    <text x="55" y="20" class="box-title" fill="#6b21a8">Resize &amp; σ</text>
+    <text x="55" y="34" class="box-sub" fill="#581c87">b = σ(Resize(B))</text>
+  </g>
+  <path d="M150, 443 L180, 443" class="arrow"/>
+
+  <!-- Saliency Gate Block -->
+  <g transform="translate(180, 150)" filter="url(#shadow)">
+    <rect width="130" height="56" rx="6" fill="#fff7ed" stroke="#f97316" stroke-width="2"/>
+    <text x="65" y="18" class="box-title" fill="#c2410c">Hard Saliency Gate</text>
+    <text x="65" y="32" class="box-sub" fill="#9a3412">1×1 Conv → BN → ReLU</text>
+    <text x="65" y="44" class="box-sub" fill="#9a3412">→ 1×1 Conv → Sigmoid</text>
+    <text x="65" y="54" class="box-formula" fill="#c2410c">S = σ(ψ(C))</text>
+  </g>
+  <path d="M235, 240 L235, 206" class="arrow"/>
+
+  <!-- ================= 3 PID BRANCHES ================= -->
+
+  <!-- Branch P: P Component -->
+  <g transform="translate(370, 72)" filter="url(#shadow)">
+    <rect width="180" height="62" rx="6" fill="#f0fdf4" stroke="#22c55e" stroke-width="2"/>
+    <text x="90" y="20" class="box-title" fill="#15803d">P Component (Proportional)</text>
+    <text x="90" y="36" class="box-formula" fill="#14532d">P_g = P ⊙ S</text>
+    <text x="90" y="50" class="box-sub" fill="#166534">Selective Spatial Detail</text>
+  </g>
+  <path d="M290, 103 L370, 103" class="arrow"/>
+  <path d="M310, 178 Q340, 178 370, 115" class="gate-arrow"/>
+
+  <!-- Branch D: D Component -->
+  <g transform="translate(370, 200)" filter="url(#shadow)">
+    <rect width="210" height="78" rx="6" fill="#faf5ff" stroke="#a855f7" stroke-width="2"/>
+    <text x="105" y="20" class="box-title" fill="#6b21a8">D Component (Derivative)</text>
+    <text x="105" y="37" class="box-formula" fill="#581c87">|P - AvgPool₃(P)| ⊙ b ⊙ S</text>
+    <text x="105" y="52" class="box-sub" fill="#6b21a8">Discrete Laplacian Edge Gradients</text>
+    <text x="105" y="66" class="box-sub" fill="#581c87">Gated by Boundary b &amp; Saliency S</text>
+  </g>
+  <!-- P to D -->
+  <path d="M290, 103 Q330, 103 370, 220" class="arrow"/>
+  <!-- S to D -->
+  <path d="M310, 178 Q340, 178 370, 235" class="gate-arrow"/>
+  <!-- b to D -->
+  <path d="M290, 443 Q340, 443 370, 255" class="bnd-arrow"/>
+
+  <!-- Branch I: I Component -->
+  <g transform="translate(370, 320)" filter="url(#shadow)">
+    <rect width="180" height="52" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="2"/>
+    <text x="90" y="20" class="box-title" fill="#1d4ed8">I Component (Integral)</text>
+    <text x="90" y="36" class="box-formula" fill="#1e40af">I = Proj_I(C)</text>
+    <text x="90" y="47" class="box-sub" fill="#1e3a8a">Accumulated Deep Context</text>
+  </g>
+  <path d="M290, 263 Q330, 263 370, 346" class="arrow"/>
+
+  <!-- Dynamic Gain Controller -->
+  <g transform="translate(370, 410)" filter="url(#shadow)">
+    <rect width="210" height="66" rx="6" fill="#fefce8" stroke="#ca8a04" stroke-width="2"/>
+    <text x="105" y="19" class="box-title" fill="#a16207">Adaptive PID Controller</text>
+    <text x="105" y="34" class="box-sub" fill="#854d0e">GAP(C) → Linear → ReLU → Linear → Softmax</text>
+    <text x="105" y="48" class="box-formula" fill="#713f12">[kP, kI, kD] ∈ ℝ³,  Σ = 1.0</text>
+    <text x="105" y="59" class="box-sub" fill="#a16207">Per-frame image-conditional weights</text>
+  </g>
+  <path d="M235, 286 L235, 443 L370, 443" class="arrow"/>
+
+  <!-- ================= WEIGHTED SUM Σ ================= -->
+  <g transform="translate(640, 220)" filter="url(#shadow)">
+    <circle cx="26" cy="26" r="26" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+    <text x="26" y="34" font-size="24" fill="#ffffff" font-weight="700" text-anchor="middle">Σ</text>
+  </g>
+  <text x="666" y="284" class="box-title" fill="#0f172a">Weighted Sum F</text>
+  <text x="666" y="299" class="box-formula" fill="#334155">F = kP·P_g + kI·I + kD·D</text>
+
+  <!-- P to Sum -->
+  <path d="M550, 103 Q620, 103 646, 225" class="arrow"/>
+  <!-- D to Sum -->
+  <path d="M580, 246 L640, 246" class="arrow"/>
+  <!-- I to Sum -->
+  <path d="M550, 346 Q620, 346 646, 265" class="arrow"/>
+  <!-- Controller to Sum -->
+  <path d="M580, 443 Q640, 443 660, 280" class="gain-arrow"/>
+  <text x="590" y="430" font-size="9" fill="#ca8a04" font-weight="700">Gains (kP, kI, kD)</text>
+
+  <!-- ================= REFINEMENT & RESIDUAL ================= -->
+  <!-- SE + Asymmetric Conv -->
+  <g transform="translate(750, 210)" filter="url(#shadow)">
+    <rect width="140" height="72" rx="8" fill="#fef2f2" stroke="#ef4444" stroke-width="2"/>
+    <text x="70" y="20" class="box-title" fill="#b91c1c">SE &amp; AsymConv Fuse</text>
+    <text x="70" y="35" class="box-sub" fill="#991b1b">① Squeeze-and-Excitation</text>
+    <text x="70" y="48" class="box-sub" fill="#991b1b">② Factorized 3×1 + 1×3</text>
+    <text x="70" y="62" class="box-formula" fill="#7f1d1d">Fuse(SE(F))</text>
+  </g>
+  <path d="M692, 246 L750, 246" class="arrow"/>
+
+  <!-- Addition Node (+) for Residual -->
+  <g transform="translate(910, 230)" filter="url(#shadow)">
+    <circle cx="16" cy="16" r="16" fill="#e0f2fe" stroke="#0284c7" stroke-width="2"/>
+    <text x="16" y="22" font-size="20" fill="#0369a1" font-weight="700" text-anchor="middle">+</text>
+  </g>
+  <path d="M890, 246 L910, 246" class="arrow"/>
+
+  <!-- RESIDUAL HIGHWAY (+ I) -->
+  <path d="M290, 275 L310, 290 L310, 520 L926, 520 L926, 262" class="res-arrow"/>
+  <text x="620" y="512" font-size="10" fill="#0284c7" font-weight="700">Residual Highway: + I (outside weighted sum)</text>
+
+  <!-- Final Output Y -->
+  <g transform="translate(860, 110)" filter="url(#shadow)">
+    <rect width="110" height="52" rx="6" fill="#15803d" stroke="#166534" stroke-width="2"/>
+    <text x="55" y="20" class="box-title" fill="#ffffff">OUTPUT Y</text>
+    <text x="55" y="34" class="box-sub" fill="#bbf7d0">Refined Features</text>
+    <text x="55" y="45" class="box-formula" fill="#ffffff">Y = Fuse(SE(F)) + I</text>
+  </g>
+  <path d="M926, 230 L926, 162" class="arrow"/>
+
+  <!-- ================= FORMULA BAR AT BOTTOM ================= -->
+  <g transform="translate(60, 560)">
+    <rect width="860" height="28" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="430" y="18" font-size="10.5" fill="#334155" font-weight="600" text-anchor="middle">
+      Mathematical Formulation:  Y = AsymmetricConv( SE( k_P·(P ⊙ S) + k_I·I + k_D·|P - AvgPool(P)| ⊙ b ⊙ S ) ) + I
+    </text>
+  </g>
+</svg>
+</body>
+</html>

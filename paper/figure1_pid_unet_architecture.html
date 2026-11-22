@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; padding: 24px; background: #ffffff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; }
+  svg { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .title { font-size: 16px; font-weight: 700; fill: #1e293b; text-anchor: middle; }
+  .subtitle { font-size: 11px; fill: #64748b; text-anchor: middle; }
+  .box-title { font-size: 11px; font-weight: 700; text-anchor: middle; }
+  .box-sub { font-size: 9.5px; text-anchor: middle; }
+  .box-dim { font-size: 9px; font-weight: 600; text-anchor: middle; font-family: "Courier New", monospace; }
+  .tag { font-size: 8.5px; font-weight: 600; text-anchor: middle; }
+  .arrow { stroke: #2563eb; stroke-width: 1.8; fill: none; marker-end: url(#arrow-blue); }
+  .skip-arrow { stroke: #ea580c; stroke-width: 1.8; stroke-dasharray: 5,3; fill: none; marker-end: url(#arrow-orange); }
+  .bnd-arrow { stroke: #9333ea; stroke-width: 1.8; stroke-dasharray: 4,3; fill: none; marker-end: url(#arrow-purple); }
+  .aux-arrow { stroke: #16a34a; stroke-width: 1.6; fill: none; marker-end: url(#arrow-green); }
+</style>
+</head>
+<body>
+<svg width="1020" height="720" viewBox="0 0 1020 720" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow-blue" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#2563eb"/></marker>
+    <marker id="arrow-orange" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#ea580c"/></marker>
+    <marker id="arrow-purple" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#9333ea"/></marker>
+    <marker id="arrow-green" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" fill="#16a34a"/></marker>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-opacity="0.08"/></filter>
+  </defs>
+
+  <!-- TITLE -->
+  <text x="510" y="24" class="title">Figure 1: Overall Architecture of PID-UNet V2 (HardGate)</text>
+  <text x="510" y="40" class="subtitle">Lightweight (0.815M Parameters, 6.63 GFLOPs) · Real-Time (46.93 FPS on Tesla T4) · 5-Scale Boundary Supervision</text>
+
+  <!-- ================= INPUT ================= -->
+  <g transform="translate(40, 60)" filter="url(#shadow)">
+    <rect width="130" height="44" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="65" y="20" class="box-title" fill="#0f172a">RGB Input</text>
+    <text x="65" y="34" class="box-dim" fill="#475569">3 × 352 × 352</text>
+  </g>
+  <path d="M105, 104 L105, 130" class="arrow"/>
+
+  <!-- ================= ENCODER COLUMN ================= -->
+  <!-- E1 -->
+  <g transform="translate(30, 130)" filter="url(#shadow)">
+    <rect width="150" height="52" rx="6" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="75" y="19" class="box-title" fill="#15803d">E1: AsymRFB</text>
+    <text x="75" y="32" class="box-sub" fill="#166534">d=(1,2) + SE</text>
+    <text x="75" y="44" class="box-dim" fill="#14532d">32 ch · 352 × 352</text>
+  </g>
+  <path d="M105, 182 L105, 206" class="arrow"/>
+
+  <!-- IPD 1 -->
+  <g transform="translate(50, 206)" filter="url(#shadow)">
+    <rect width="110" height="26" rx="4" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.2"/>
+    <text x="55" y="17" class="tag" fill="#1d4ed8">↓ IPD: Conv || Pool</text>
+  </g>
+  <path d="M105, 232 L105, 252" class="arrow"/>
+
+  <!-- E2 -->
+  <g transform="translate(30, 252)" filter="url(#shadow)">
+    <rect width="150" height="52" rx="6" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="75" y="19" class="box-title" fill="#15803d">E2: AsymRFB</text>
+    <text x="75" y="32" class="box-sub" fill="#166534">d=(1,2,4) + SE</text>
+    <text x="75" y="44" class="box-dim" fill="#14532d">64 ch · 176 × 176</text>
+  </g>
+  <path d="M105, 304 L105, 328" class="arrow"/>
+
+  <!-- IPD 2 -->
+  <g transform="translate(50, 328)" filter="url(#shadow)">
+    <rect width="110" height="26" rx="4" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.2"/>
+    <text x="55" y="17" class="tag" fill="#1d4ed8">↓ IPD: Conv || Pool</text>
+  </g>
+  <path d="M105, 354 L105, 374" class="arrow"/>
+
+  <!-- E3 -->
+  <g transform="translate(30, 374)" filter="url(#shadow)">
+    <rect width="150" height="52" rx="6" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="75" y="19" class="box-title" fill="#15803d">E3: AsymRFB</text>
+    <text x="75" y="32" class="box-sub" fill="#166534">d=(1,2,4) + SE</text>
+    <text x="75" y="44" class="box-dim" fill="#14532d">96 ch · 88 × 88</text>
+  </g>
+  <path d="M105, 426 L105, 450" class="arrow"/>
+
+  <!-- IPD 3 -->
+  <g transform="translate(50, 450)" filter="url(#shadow)">
+    <rect width="110" height="26" rx="4" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.2"/>
+    <text x="55" y="17" class="tag" fill="#1d4ed8">↓ IPD: Conv || Pool</text>
+  </g>
+  <path d="M105, 476 L105, 496" class="arrow"/>
+
+  <!-- E4 -->
+  <g transform="translate(30, 496)" filter="url(#shadow)">
+    <rect width="150" height="52" rx="6" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="75" y="19" class="box-title" fill="#15803d">E4: AsymRFB</text>
+    <text x="75" y="32" class="box-sub" fill="#166534">d=(1,2,4) + SE</text>
+    <text x="75" y="44" class="box-dim" fill="#14532d">128 ch · 44 × 44</text>
+  </g>
+  <path d="M105, 548 L105, 572" class="arrow"/>
+
+  <!-- IPD 4 -->
+  <g transform="translate(50, 572)" filter="url(#shadow)">
+    <rect width="110" height="26" rx="4" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.2"/>
+    <text x="55" y="17" class="tag" fill="#1d4ed8">↓ IPD: Conv || Pool</text>
+  </g>
+  <path d="M105, 598 L105, 622" class="arrow"/>
+
+  <!-- BOTTLENECK -->
+  <g transform="translate(20, 622)" filter="url(#shadow)">
+    <rect width="170" height="66" rx="8" fill="#fef2f2" stroke="#ef4444" stroke-width="2"/>
+    <text x="85" y="20" class="box-title" fill="#b91c1c">Bottleneck: HARF-GC</text>
+    <text x="85" y="34" class="box-sub" fill="#991b1b">RFB d=(1,2,4,8) + GlobalPool</text>
+    <text x="85" y="47" class="box-sub" fill="#7f1d1d">+ Additive GlobalContext</text>
+    <text x="85" y="59" class="box-dim" fill="#b91c1c">192 ch · 22 × 22</text>
+  </g>
+
+  <!-- ================= 5-SCALE BOUNDARY BRANCH (SBS) ================= -->
+  <g transform="translate(340, 624)" filter="url(#shadow)">
+    <rect width="200" height="62" rx="8" fill="#faf5ff" stroke="#a855f7" stroke-width="2"/>
+    <text x="100" y="20" class="box-title" fill="#6b21a8">5-Scale Boundary Stream (SBS)</text>
+    <text x="100" y="34" class="box-sub" fill="#581c87">Project E1-E4, I to 24ch</text>
+    <text x="100" y="46" class="box-sub" fill="#581c87">Concat (120ch) → AsymConv → 1ch</text>
+    <text x="100" y="57" class="box-dim" fill="#6b21a8">Boundary Logits B: 1 × 176 × 176</text>
+  </g>
+
+  <!-- Inputs to SBS -->
+  <!-- Bottleneck to SBS -->
+  <path d="M190, 655 L340, 655" class="arrow"/>
+  <!-- Encoder taps to SBS (dotted purple) -->
+  <path d="M180, 156 Q280, 156 340, 635" class="bnd-arrow"/>
+  <path d="M180, 278 Q290, 278 340, 645" class="bnd-arrow"/>
+  <path d="M180, 400 Q290, 400 340, 655" class="bnd-arrow"/>
+  <path d="M180, 522 Q290, 522 340, 665" class="bnd-arrow"/>
+
+  <!-- Boundary map out to decoders -->
+  <path d="M540, 655 L600, 655 L600, 156 L640, 156" class="bnd-arrow"/>
+  <path d="M600, 278 L640, 278" class="bnd-arrow"/>
+  <path d="M600, 400 L640, 400" class="bnd-arrow"/>
+  <path d="M600, 522 L640, 522" class="bnd-arrow"/>
+  <text x="590" y="360" font-size="9" fill="#9333ea" font-weight="700" transform="rotate(-90, 590, 360)">Boundary Map b = σ(Resize(B))</text>
+
+  <!-- ================= DECODER COLUMN (SG-PID) ================= -->
+  <!-- Bottleneck to SG-PID 4 -->
+  <path d="M190, 665 Q580, 665 650, 545" class="arrow"/>
+  <text x="440" y="570" font-size="9" fill="#2563eb" font-weight="600">I: Upsampled Context</text>
+
+  <!-- SG-PID 4 -->
+  <g transform="translate(640, 494)" filter="url(#shadow)">
+    <rect width="180" height="56" rx="6" fill="#fff7ed" stroke="#f97316" stroke-width="2"/>
+    <text x="90" y="19" class="box-title" fill="#c2410c">SG-PID Fusion 4</text>
+    <text x="90" y="32" class="box-sub" fill="#9a3412">P=E4 (128ch), I=Bottleneck</text>
+    <text x="90" y="44" class="box-sub" fill="#7c2d12">HardGate (S=sal) + Dynamic PID</text>
+    <text x="90" y="53" class="box-dim" fill="#c2410c">Out: 128 ch · 44 × 44</text>
+  </g>
+  <!-- Skip E4 to SG-PID 4 -->
+  <path d="M180, 522 L640, 522" class="skip-arrow"/>
+  <text x="260" y="516" font-size="9" fill="#ea580c" font-weight="600">Skip E4 (P)</text>
+
+  <path d="M730, 494 L730, 452" class="arrow"/>
+
+  <!-- SG-PID 3 -->
+  <g transform="translate(640, 372)" filter="url(#shadow)">
+    <rect width="180" height="56" rx="6" fill="#fff7ed" stroke="#f97316" stroke-width="2"/>
+    <text x="90" y="19" class="box-title" fill="#c2410c">SG-PID Fusion 3</text>
+    <text x="90" y="32" class="box-sub" fill="#9a3412">P=E3 (96ch), I=d4 (128ch)</text>
+    <text x="90" y="44" class="box-sub" fill="#7c2d12">HardGate (S=sal) + Dynamic PID</text>
+    <text x="90" y="53" class="box-dim" fill="#c2410c">Out: 96 ch · 88 × 88</text>
+  </g>
+  <!-- Skip E3 to SG-PID 3 -->
+  <path d="M180, 400 L640, 400" class="skip-arrow"/>
+  <text x="260" y="394" font-size="9" fill="#ea580c" font-weight="600">Skip E3 (P)</text>
+
+  <path d="M730, 372 L730, 330" class="arrow"/>
+
+  <!-- SG-PID 2 -->
+  <g transform="translate(640, 250)" filter="url(#shadow)">
+    <rect width="180" height="56" rx="6" fill="#fff7ed" stroke="#f97316" stroke-width="2"/>
+    <text x="90" y="19" class="box-title" fill="#c2410c">SG-PID Fusion 2</text>
+    <text x="90" y="32" class="box-sub" fill="#9a3412">P=E2 (64ch), I=d3 (96ch)</text>
+    <text x="90" y="44" class="box-sub" fill="#7c2d12">HardGate (S=sal) + Dynamic PID</text>
+    <text x="90" y="53" class="box-dim" fill="#c2410c">Out: 64 ch · 176 × 176</text>
+  </g>
+  <!-- Skip E2 to SG-PID 2 -->
+  <path d="M180, 278 L640, 278" class="skip-arrow"/>
+  <text x="260" y="272" font-size="9" fill="#ea580c" font-weight="600">Skip E2 (P)</text>
+
+  <path d="M730, 250 L730, 208" class="arrow"/>
+
+  <!-- SG-PID 1 (TOP) -->
+  <g transform="translate(640, 128)" filter="url(#shadow)">
+    <rect width="180" height="56" rx="6" fill="#fff7ed" stroke="#f97316" stroke-width="2"/>
+    <text x="90" y="19" class="box-title" fill="#c2410c">SG-PID Fusion 1</text>
+    <text x="90" y="32" class="box-sub" fill="#9a3412">P=E1 (32ch), I=d2 (64ch)</text>
+    <text x="90" y="44" class="box-sub" fill="#7c2d12">HardGate (S=sal) + Dynamic PID</text>
+    <text x="90" y="53" class="box-dim" fill="#c2410c">Out: 32 ch · 352 × 352</text>
+  </g>
+  <!-- Skip E1 to SG-PID 1 -->
+  <path d="M180, 156 L640, 156" class="skip-arrow"/>
+  <text x="260" y="150" font-size="9" fill="#ea580c" font-weight="600">Skip E1 (P)</text>
+
+  <!-- ================= DEEP SUPERVISION HEADS ================= -->
+  <!-- Aux Head 4 -->
+  <g transform="translate(860, 502)" filter="url(#shadow)">
+    <rect width="125" height="40" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1.2"/>
+    <text x="62" y="17" class="box-title" fill="#166534">Aux Head 4</text>
+    <text x="62" y="30" class="box-dim" fill="#15803d">1 × 352 × 352 (Loss)</text>
+  </g>
+  <path d="M820, 522 L860, 522" class="aux-arrow"/>
+
+  <!-- Aux Head 3 -->
+  <g transform="translate(860, 380)" filter="url(#shadow)">
+    <rect width="125" height="40" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1.2"/>
+    <text x="62" y="17" class="box-title" fill="#166534">Aux Head 3</text>
+    <text x="62" y="30" class="box-dim" fill="#15803d">1 × 352 × 352 (Loss)</text>
+  </g>
+  <path d="M820, 400 L860, 400" class="aux-arrow"/>
+
+  <!-- Aux Head 2 -->
+  <g transform="translate(860, 258)" filter="url(#shadow)">
+    <rect width="125" height="40" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1.2"/>
+    <text x="62" y="17" class="box-title" fill="#166534">Aux Head 2</text>
+    <text x="62" y="30" class="box-dim" fill="#15803d">1 × 352 × 352 (Loss)</text>
+  </g>
+  <path d="M820, 278 L860, 278" class="aux-arrow"/>
+
+  <!-- Final Segmentation Head 1 -->
+  <g transform="translate(860, 132)" filter="url(#shadow)">
+    <rect width="135" height="48" rx="6" fill="#15803d" stroke="#166534" stroke-width="2"/>
+    <text x="67" y="20" class="box-title" fill="#ffffff">FINAL OUTPUT</text>
+    <text x="67" y="33" class="box-sub" fill="#bbf7d0">Segmentation Head 1</text>
+    <text x="67" y="44" class="box-dim" fill="#ffffff">1 × 352 × 352</text>
+  </g>
+  <path d="M820, 156 L860, 156" class="aux-arrow"/>
+
+  <!-- ================= LEGEND BAR ================= -->
+  <g transform="translate(140, 700)">
+    <rect x="-10" y="-12" width="760" height="24" rx="4" fill="#f1f5f9"/>
+    <!-- Main -->
+    <line x1="0" y1="0" x2="30" y2="0" stroke="#2563eb" stroke-width="2"/>
+    <text x="36" y="4" font-size="10" fill="#334155">Main Flow</text>
+    <!-- Skip -->
+    <line x1="120" y1="0" x2="150" y2="0" stroke="#ea580c" stroke-width="2" stroke-dasharray="4,2"/>
+    <text x="156" y="4" font-size="10" fill="#334155">Skip Connection (P)</text>
+    <!-- Boundary -->
+    <line x1="290" y1="0" x2="320" y2="0" stroke="#9333ea" stroke-width="2" stroke-dasharray="3,2"/>
+    <text x="326" y="4" font-size="10" fill="#334155">Boundary Stream (b)</text>
+    <!-- Aux/Head -->
+    <line x1="470" y1="0" x2="500" y2="0" stroke="#16a34a" stroke-width="2"/>
+    <text x="506" y="4" font-size="10" fill="#334155">Deep Supervision Head</text>
+  </g>
+</svg>
+</body>
+</html>

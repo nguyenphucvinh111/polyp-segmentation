@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SG-PID Block Detail</title>
+<style>
+  body { background: #0f1117; font-family: 'Arial', sans-serif; margin:0; padding:20px; display:flex; flex-direction:column; align-items:center; }
+  h2 { color:#e0e6f0; font-size:17px; margin-bottom:3px; letter-spacing:1px; }
+  p.sub { color:#7a8aaa; font-size:12px; margin:0 0 16px; }
+</style>
+</head>
+<body>
+<h2>SG-PID Block — Hard Saliency-Gated PID Fusion</h2>
+<p class="sub">Module đóng góp chính · Used in all 4 decoder stages of PID-UNet</p>
+
+<svg width="820" height="580" viewBox="0 0 820 580">
+<defs>
+  <marker id="ah" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4a9eff"/></marker>
+  <marker id="ah2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff8c42"/></marker>
+  <marker id="ah3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#9d7fff"/></marker>
+  <marker id="ah4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff4466"/></marker>
+  <linearGradient id="gInput" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#2a4a7f"/><stop offset="100%" stop-color="#1a3060"/></linearGradient>
+  <linearGradient id="gGate" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7f4a00"/><stop offset="100%" stop-color="#4a2800"/></linearGradient>
+  <linearGradient id="gP" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1a5a3a"/><stop offset="100%" stop-color="#0d3020"/></linearGradient>
+  <linearGradient id="gD" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#5a1a5a"/><stop offset="100%" stop-color="#300a30"/></linearGradient>
+  <linearGradient id="gI" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1a3a7f"/><stop offset="100%" stop-color="#0d2050"/></linearGradient>
+  <linearGradient id="gCtrl" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4a3a00"/><stop offset="100%" stop-color="#2a2000"/></linearGradient>
+  <linearGradient id="gFuse" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7f1a1a"/><stop offset="100%" stop-color="#401010"/></linearGradient>
+  <filter id="glow"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+
+<!-- ===== INPUTS ===== -->
+<!-- P feat (skip from encoder) -->
+<rect x="20" y="130" width="90" height="40" rx="5" fill="url(#gInput)" stroke="#4a9eff" stroke-width="1.5"/>
+<text x="65" y="146" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle" dominant-baseline="middle">P feat</text>
+<text x="65" y="161" font-size="9" fill="#aab8d0" text-anchor="middle">(skip from enc)</text>
+
+<!-- I feat (from deeper decoder) -->
+<rect x="20" y="260" width="90" height="40" rx="5" fill="url(#gInput)" stroke="#4a9eff" stroke-width="1.5"/>
+<text x="65" y="276" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle" dominant-baseline="middle">I feat</text>
+<text x="65" y="291" font-size="9" fill="#aab8d0" text-anchor="middle">(deeper decoder)</text>
+
+<!-- Boundary map -->
+<rect x="20" y="390" width="90" height="40" rx="5" fill="#1a0a30" stroke="#9d7fff" stroke-width="1.5"/>
+<text x="65" y="406" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle" dominant-baseline="middle">b_map</text>
+<text x="65" y="421" font-size="9" fill="#aab8d0" text-anchor="middle">(boundary logits)</text>
+
+<!-- ===== SALIENCY GATE ===== -->
+<rect x="160" y="250" width="110" height="60" rx="6" fill="url(#gGate)" stroke="#ff8c42" stroke-width="2" filter="url(#glow)"/>
+<text x="215" y="272" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle">Saliency Gate</text>
+<text x="215" y="287" font-size="9" fill="#ffc080" text-anchor="middle">Conv→BN→ReLU→</text>
+<text x="215" y="300" font-size="9" fill="#ffc080" text-anchor="middle">Conv→σ</text>
+<!-- I feat → Saliency Gate -->
+<line x1="110" y1="280" x2="160" y2="280" stroke="#4a9eff" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="135" y="275" font-size="9" fill="#6a90b0" text-anchor="middle">I_feat</text>
+
+<!-- Gate output: G = σ(Conv(I)) -->
+<text x="215" y="328" font-size="10" fill="#ff8c42" text-anchor="middle" font-style="italic">G = σ(Conv(I))</text>
+
+<!-- ===== PROJ_P ===== -->
+<rect x="160" y="120" width="100" height="40" rx="5" fill="#1a3050" stroke="#4499ff" stroke-width="1"/>
+<text x="210" y="136" font-size="10" font-weight="bold" fill="#fff" text-anchor="middle">Proj_P</text>
+<text x="210" y="150" font-size="9" fill="#aab8d0" text-anchor="middle">Conv1×1→BN→ReLU</text>
+<!-- P feat → Proj_P -->
+<line x1="110" y1="150" x2="160" y2="140" stroke="#4a9eff" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<!-- ===== PROJ_I ===== -->
+<rect x="160" y="380" width="100" height="40" rx="5" fill="#1a3050" stroke="#4499ff" stroke-width="1"/>
+<text x="210" y="396" font-size="10" font-weight="bold" fill="#fff" text-anchor="middle">Proj_I</text>
+<text x="210" y="410" font-size="9" fill="#aab8d0" text-anchor="middle">Conv1×1→BN→ReLU</text>
+<!-- I feat → Proj_I -->
+<path d="M65,300 L65,420 L160,400" stroke="#4a9eff" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+
+<!-- ===== P BRANCH (P-Component) ===== -->
+<rect x="330" y="100" width="130" height="60" rx="6" fill="url(#gP)" stroke="#2ecc71" stroke-width="2"/>
+<text x="395" y="120" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle">P Component</text>
+<text x="395" y="135" font-size="9" fill="#80ffb0" text-anchor="middle">p_gated = Proj_P(P)</text>
+<text x="395" y="148" font-size="9" fill="#80ffb0" text-anchor="middle">⊙ G  (hard gate)</text>
+<!-- Proj_P → P Component -->
+<line x1="260" y1="140" x2="330" y2="130" stroke="#4a9eff" stroke-width="1.5" marker-end="url(#ah)"/>
+<!-- Gate → P Component -->
+<path d="M270,280 Q300,280 300,130 L330,130" stroke="#ff8c42" stroke-width="1.5" fill="none" stroke-dasharray="5,3" marker-end="url(#ah2)"/>
+<text x="308" y="200" font-size="9" fill="#ff8c42" text-anchor="middle">G</text>
+
+<!-- ===== D BRANCH (D-Component) ===== -->
+<rect x="330" y="230" width="130" height="80" rx="6" fill="url(#gD)" stroke="#c060ff" stroke-width="2"/>
+<text x="395" y="250" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle">D Component</text>
+<text x="395" y="265" font-size="9" fill="#e090ff" text-anchor="middle">|Proj_P − AvgPool(Proj_P)|</text>
+<text x="395" y="278" font-size="9" fill="#e090ff" text-anchor="middle">⊙ σ(b_map) ⊙ G</text>
+<text x="395" y="291" font-size="9" fill="#e090ff" text-anchor="middle">(boundary Laplacian)</text>
+<text x="395" y="304" font-size="9" fill="#e090ff" text-anchor="middle"> </text>
+<!-- Proj_P → D Component (p_proj) -->
+<path d="M260,140 Q290,140 310,270 L330,270" stroke="#4a9eff" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<!-- Gate → D Component -->
+<line x1="270" y1="280" x2="330" y2="278" stroke="#ff8c42" stroke-width="1.5" fill="none" stroke-dasharray="5,3" marker-end="url(#ah2)"/>
+<!-- b_map → D Component -->
+<path d="M110,410 Q230,410 310,290 L330,278" stroke="#9d7fff" stroke-width="1.5" fill="none" stroke-dasharray="4,2" marker-end="url(#ah3)"/>
+
+<!-- ===== I BRANCH (I-Component) ===== -->
+<rect x="330" y="370" width="130" height="50" rx="6" fill="url(#gI)" stroke="#4499ff" stroke-width="2"/>
+<text x="395" y="390" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle">I Component</text>
+<text x="395" y="405" font-size="9" fill="#80c0ff" text-anchor="middle">i_proj = Proj_I(I)</text>
+<text x="395" y="415" font-size="9" fill="#80c0ff" text-anchor="middle">(deep context)</text>
+<!-- Proj_I → I Component -->
+<line x1="260" y1="400" x2="330" y2="395" stroke="#4a9eff" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<!-- ===== DYNAMIC CONTROLLER ===== -->
+<rect x="330" y="470" width="130" height="70" rx="6" fill="url(#gCtrl)" stroke="#ffcc44" stroke-width="2"/>
+<text x="395" y="488" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle">Dynamic Controller</text>
+<text x="395" y="502" font-size="9" fill="#ffe080" text-anchor="middle">GAP(I_feat) → Linear</text>
+<text x="395" y="515" font-size="9" fill="#ffe080" text-anchor="middle">→ Softmax</text>
+<text x="395" y="528" font-size="9" fill="#ffe080" text-anchor="middle">→ (Kp, Ki, Kd)</text>
+<!-- I feat → Controller -->
+<path d="M65,280 L65,520 Q200,520 330,510" stroke="#4a9eff" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+
+<!-- ===== WEIGHTED SUM ===== -->
+<rect x="530" y="250" width="90" height="80" rx="6" fill="#2a1a3a" stroke="#c060ff" stroke-width="1.5"/>
+<text x="575" y="275" font-size="10" font-weight="bold" fill="#fff" text-anchor="middle">Weighted Sum</text>
+<text x="575" y="292" font-size="9" fill="#e090ff" text-anchor="middle">Kp·P + Ki·I</text>
+<text x="575" y="305" font-size="9" fill="#e090ff" text-anchor="middle">+ Kd·D</text>
+<text x="575" y="320" font-size="9" fill="#ffe080" text-anchor="middle">(frame-adaptive)</text>
+
+<!-- P → Σ -->
+<path d="M460,130 Q500,130 500,290 L530,290" stroke="#2ecc71" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<!-- D → Σ -->
+<line x1="460" y1="280" x2="530" y2="285" stroke="#c060ff" stroke-width="1.5" marker-end="url(#ah)"/>
+<!-- I → Σ -->
+<path d="M460,395 Q505,395 505,310 L530,310" stroke="#4499ff" stroke-width="1.5" fill="none" marker-end="url(#ah)"/>
+<!-- Controller → Σ (Kp,Ki,Kd) -->
+<path d="M460,505 Q510,505 510,310 L530,310" stroke="#ffcc44" stroke-width="1.5" fill="none" stroke-dasharray="5,3" marker-end="url(#ah)"/>
+
+<!-- ===== SE + AsymConv + Residual ===== -->
+<rect x="680" y="230" width="120" height="120" rx="6" fill="url(#gFuse)" stroke="#ff4444" stroke-width="2" filter="url(#glow)"/>
+<text x="740" y="253" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle">Fuse + Residual</text>
+<text x="740" y="270" font-size="9" fill="#ff9090" text-anchor="middle">① SE Channel Recalib</text>
+<text x="740" y="285" font-size="9" fill="#ff9090" text-anchor="middle">② AsymConv(3×1,1×3)</text>
+<text x="740" y="300" font-size="9" fill="#ff9090" text-anchor="middle">③ + i_proj (residual)</text>
+<text x="740" y="318" font-size="9" fill="#ffe090" text-anchor="middle" font-style="italic">out = AsymConv(SE(·))</text>
+<text x="740" y="332" font-size="9" fill="#ffe090" text-anchor="middle" font-style="italic">    + i_proj</text>
+<!-- Σ → Fuse -->
+<line x1="620" y1="290" x2="680" y2="290" stroke="#ff4444" stroke-width="1.5" marker-end="url(#ah)"/>
+<!-- i_proj residual bypass -->
+<path d="M210,400 Q210,440 760,440 L760,350" stroke="#4499ff" stroke-width="1.5" fill="none" stroke-dasharray="6,3" marker-end="url(#ah)"/>
+<text x="490" y="455" font-size="9" fill="#4499ff" text-anchor="middle">residual (i_proj)</text>
+
+<!-- ===== OUTPUT ===== -->
+<rect x="680" y="470" width="120" height="40" rx="5" fill="#1a3a1a" stroke="#33ff88" stroke-width="2"/>
+<text x="740" y="487" font-size="11" font-weight="bold" fill="#fff" text-anchor="middle">d_out</text>
+<text x="740" y="500" font-size="9" fill="#aab8d0" text-anchor="middle">(refined features)</text>
+<line x1="740" y1="350" x2="740" y2="470" stroke="#33ff88" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<!-- ===== FORMULA BOX ===== -->
+<rect x="20" y="530" width="780" height="38" rx="5" fill="#141a24" stroke="#2a3a4a" stroke-width="1"/>
+<text x="410" y="542" font-size="10" fill="#6090a0" text-anchor="middle" font-weight="bold">SG-PID Forward:</text>
+<text x="410" y="557" font-size="10" fill="#aac8d0" text-anchor="middle" font-family="monospace">G = σ(Conv(I))  ·  P_g = Proj_P(P)⊙G  ·  D = |P_g − AvgPool(P_g)|⊙σ(b_map)⊙G  ·  out = AsymConv(SE(Kp·P_g + Ki·I + Kd·D)) + I</text>
+
+</svg>
+</body>
+</html>

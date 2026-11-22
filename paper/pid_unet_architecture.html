@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PID-UNet Architecture</title>
+<style>
+  body { background: #0f1117; font-family: 'Arial', sans-serif; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+  h2 { color: #e0e6f0; font-size: 18px; margin-bottom: 4px; letter-spacing: 1px; }
+  p.subtitle { color: #7a8aaa; font-size: 12px; margin: 0 0 20px 0; }
+  svg { overflow: visible; }
+  .block-label { font-size: 11px; font-weight: bold; fill: #fff; text-anchor: middle; dominant-baseline: middle; }
+  .dim-label { font-size: 9px; fill: #aab8d0; text-anchor: middle; }
+  .arrow { stroke: #4a9eff; stroke-width: 1.5; fill: none; marker-end: url(#arrowhead); }
+  .arrow-skip { stroke: #ff8c42; stroke-width: 1.5; fill: none; stroke-dasharray: 5,3; marker-end: url(#arrowhead-skip); }
+  .arrow-bound { stroke: #9d7fff; stroke-width: 1.5; fill: none; stroke-dasharray: 4,2; marker-end: url(#arrowhead-bound); }
+  .section-label { font-size: 10px; fill: #5a7090; font-style: italic; text-anchor: middle; }
+</style>
+</head>
+<body>
+<h2>PID-UNet (SG-PID Block Architecture)</h2>
+<p class="subtitle">0.815M Parameters &bull; U-Net with Hard Saliency-Gated PID Decoder</p>
+
+<svg width="860" height="720" viewBox="0 0 860 720">
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#4a9eff"/>
+    </marker>
+    <marker id="arrowhead-skip" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#ff8c42"/>
+    </marker>
+    <marker id="arrowhead-bound" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#9d7fff"/>
+    </marker>
+    <!-- Gradients -->
+    <linearGradient id="gStem" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#2a4a7f"/><stop offset="100%" stop-color="#1a3060"/></linearGradient>
+    <linearGradient id="gEnc" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1a5a3f"/><stop offset="100%" stop-color="#0d3a28"/></linearGradient>
+    <linearGradient id="gIPD" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#3a3a7f"/><stop offset="100%" stop-color="#222260"/></linearGradient>
+    <linearGradient id="gBottle" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7f1a1a"/><stop offset="100%" stop-color="#501010"/></linearGradient>
+    <linearGradient id="gPID" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6a3a00"/><stop offset="100%" stop-color="#3a2000"/></linearGradient>
+    <linearGradient id="gBound" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#4a0f6a"/><stop offset="100%" stop-color="#2a0840"/></linearGradient>
+    <linearGradient id="gHead" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1a4a1a"/><stop offset="100%" stop-color="#0d2a0d"/></linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- ============================================================ -->
+  <!-- INPUT -->
+  <!-- ============================================================ -->
+  <rect x="30" y="10" width="90" height="34" rx="5" fill="#1e2a40" stroke="#4a9eff" stroke-width="1.5"/>
+  <text x="75" y="22" class="block-label" font-size="10">Input Image</text>
+  <text x="75" y="35" class="dim-label">3×352×352</text>
+
+  <!-- ============================================================ -->
+  <!-- ENCODER COLUMN (left side, x=30..120, going down) -->
+  <!-- ============================================================ -->
+
+  <!-- STEM -->
+  <rect x="30" y="70" width="90" height="38" rx="5" fill="url(#gStem)" stroke="#4a9eff" stroke-width="1.5" filter="url(#glow)"/>
+  <text x="75" y="85" class="block-label">Stem</text>
+  <text x="75" y="97" class="dim-label">Conv3×3 · BN · ReLU</text>
+  <!-- arrow input->stem -->
+  <line x1="75" y1="44" x2="75" y2="68" class="arrow"/>
+
+  <!-- enc1 -->
+  <rect x="30" y="134" width="90" height="38" rx="5" fill="url(#gEnc)" stroke="#2ecc71" stroke-width="1.5"/>
+  <text x="75" y="149" class="block-label">Enc₁ · AsymRFB</text>
+  <text x="75" y="161" class="dim-label">d=(1,2) · 32ch</text>
+  <!-- stem->enc1 -->
+  <line x1="75" y1="108" x2="75" y2="132" class="arrow"/>
+
+  <!-- IPD1 -->
+  <rect x="30" y="196" width="90" height="30" rx="5" fill="url(#gIPD)" stroke="#8080ff" stroke-width="1"/>
+  <text x="75" y="207" class="block-label" font-size="9">IPD₁ ↓2</text>
+  <text x="75" y="219" class="dim-label">Conv‖MaxPool → 64ch</text>
+  <line x1="75" y1="172" x2="75" y2="194" class="arrow"/>
+
+  <!-- enc2 -->
+  <rect x="30" y="250" width="90" height="38" rx="5" fill="url(#gEnc)" stroke="#2ecc71" stroke-width="1.5"/>
+  <text x="75" y="265" class="block-label">Enc₂ · AsymRFB</text>
+  <text x="75" y="277" class="dim-label">d=(1,2,4) · 64ch</text>
+  <line x1="75" y1="226" x2="75" y2="248" class="arrow"/>
+
+  <!-- IPD2 -->
+  <rect x="30" y="312" width="90" height="30" rx="5" fill="url(#gIPD)" stroke="#8080ff" stroke-width="1"/>
+  <text x="75" y="323" class="block-label" font-size="9">IPD₂ ↓2</text>
+  <text x="75" y="335" class="dim-label">Conv‖MaxPool → 96ch</text>
+  <line x1="75" y1="288" x2="75" y2="310" class="arrow"/>
+
+  <!-- enc3 -->
+  <rect x="30" y="366" width="90" height="38" rx="5" fill="url(#gEnc)" stroke="#2ecc71" stroke-width="1.5"/>
+  <text x="75" y="381" class="block-label">Enc₃ · AsymRFB</text>
+  <text x="75" y="393" class="dim-label">d=(1,2,4) · 96ch</text>
+  <line x1="75" y1="342" x2="75" y2="364" class="arrow"/>
+
+  <!-- IPD3 -->
+  <rect x="30" y="428" width="90" height="30" rx="5" fill="url(#gIPD)" stroke="#8080ff" stroke-width="1"/>
+  <text x="75" y="439" class="block-label" font-size="9">IPD₃ ↓2</text>
+  <text x="75" y="451" class="dim-label">Conv‖MaxPool → 128ch</text>
+  <line x1="75" y1="404" x2="75" y2="426" class="arrow"/>
+
+  <!-- enc4 -->
+  <rect x="30" y="482" width="90" height="38" rx="5" fill="url(#gEnc)" stroke="#2ecc71" stroke-width="1.5"/>
+  <text x="75" y="497" class="block-label">Enc₄ · AsymRFB</text>
+  <text x="75" y="509" class="dim-label">d=(1,2,4) · 128ch</text>
+  <line x1="75" y1="458" x2="75" y2="480" class="arrow"/>
+
+  <!-- IPD4 -->
+  <rect x="30" y="544" width="90" height="30" rx="5" fill="url(#gIPD)" stroke="#8080ff" stroke-width="1"/>
+  <text x="75" y="555" class="block-label" font-size="9">IPD₄ ↓2</text>
+  <text x="75" y="567" class="dim-label">Conv‖MaxPool → 192ch</text>
+  <line x1="75" y1="520" x2="75" y2="542" class="arrow"/>
+
+  <!-- BOTTLENECK -->
+  <rect x="22" y="598" width="106" height="48" rx="6" fill="url(#gBottle)" stroke="#ff4444" stroke-width="2" filter="url(#glow)"/>
+  <text x="75" y="612" class="block-label">HARF-GC</text>
+  <text x="75" y="624" class="block-label" font-size="9">AsymRFB d=(1,2,4,8)</text>
+  <text x="75" y="636" class="dim-label">+GlobalContext · 192ch</text>
+  <line x1="75" y1="574" x2="75" y2="596" class="arrow"/>
+
+  <!-- Section labels (left) -->
+  <text x="10" y="153" class="section-label" transform="rotate(-90,10,153)" font-size="9" fill="#3ecc71">ENCODER</text>
+
+  <!-- ============================================================ -->
+  <!-- BOUNDARY BRANCH (top center) -->
+  <!-- ============================================================ -->
+  <rect x="295" y="598" width="130" height="48" rx="6" fill="url(#gBound)" stroke="#c06fff" stroke-width="2"/>
+  <text x="360" y="613" class="block-label">SBS</text>
+  <text x="360" y="625" class="block-label" font-size="9">5-Scale Boundary Branch</text>
+  <text x="360" y="639" class="dim-label">e1,e2,e3,e4,i_feat → 1ch</text>
+
+  <!-- arrows from encoders to boundary branch -->
+  <!-- e1 -->
+  <path d="M120,153 Q200,153 295,620" class="arrow-bound" fill="none"/>
+  <!-- e2 -->
+  <path d="M120,269 Q220,269 295,622" class="arrow-bound" fill="none"/>
+  <!-- e3 -->
+  <path d="M120,385 Q230,385 295,625" class="arrow-bound" fill="none"/>
+  <!-- e4 -->
+  <path d="M120,501 Q240,501 295,628" class="arrow-bound" fill="none"/>
+  <!-- i_feat -->
+  <path d="M128,622 Q210,622 293,622" class="arrow" fill="none"/>
+
+  <!-- ============================================================ -->
+  <!-- DECODER COLUMN (right side) -->
+  <!-- ============================================================ -->
+
+  <!-- SG-PID Block 4 (d4) -->
+  <rect x="510" y="472" width="120" height="58" rx="6" fill="url(#gPID)" stroke="#ffaa33" stroke-width="2" filter="url(#glow)"/>
+  <text x="570" y="488" class="block-label">SG-PID₄</text>
+  <text x="570" y="500" class="block-label" font-size="9">P=e4 · I=i_feat</text>
+  <text x="570" y="512" class="dim-label">Gate=σ(Conv(I))</text>
+  <text x="570" y="522" class="dim-label">128ch out</text>
+
+  <!-- SG-PID Block 3 (d3) -->
+  <rect x="510" y="366" width="120" height="58" rx="6" fill="url(#gPID)" stroke="#ffaa33" stroke-width="2" filter="url(#glow)"/>
+  <text x="570" y="382" class="block-label">SG-PID₃</text>
+  <text x="570" y="394" class="block-label" font-size="9">P=e3 · I=d4</text>
+  <text x="570" y="406" class="dim-label">Gate=σ(Conv(I))</text>
+  <text x="570" y="416" class="dim-label">96ch out</text>
+
+  <!-- SG-PID Block 2 (d2) -->
+  <rect x="510" y="260" width="120" height="58" rx="6" fill="url(#gPID)" stroke="#ffaa33" stroke-width="2" filter="url(#glow)"/>
+  <text x="570" y="276" class="block-label">SG-PID₂</text>
+  <text x="570" y="288" class="block-label" font-size="9">P=e2 · I=d3</text>
+  <text x="570" y="300" class="dim-label">Gate=σ(Conv(I))</text>
+  <text x="570" y="310" class="dim-label">64ch out</text>
+
+  <!-- SG-PID Block 1 (d1) -->
+  <rect x="510" y="154" width="120" height="58" rx="6" fill="url(#gPID)" stroke="#ffaa33" stroke-width="2" filter="url(#glow)"/>
+  <text x="570" y="170" class="block-label">SG-PID₁</text>
+  <text x="570" y="182" class="block-label" font-size="9">P=e1 · I=d2</text>
+  <text x="570" y="194" class="dim-label">Gate=σ(Conv(I))</text>
+  <text x="570" y="204" class="dim-label">32ch out</text>
+
+  <!-- Section label (right) -->
+  <text x="650" y="350" class="section-label" transform="rotate(90,650,350)" font-size="9" fill="#ffaa33">DECODER (SG-PID)</text>
+
+  <!-- ============================================================ -->
+  <!-- SKIP CONNECTIONS (encoder → decoder) -->
+  <!-- ============================================================ -->
+  <!-- e4 → SG-PID4 P -->
+  <path d="M120,501 L510,501" class="arrow-skip" fill="none"/>
+  <!-- e3 → SG-PID3 P -->
+  <path d="M120,385 L510,395" class="arrow-skip" fill="none"/>
+  <!-- e2 → SG-PID2 P -->
+  <path d="M120,269 L510,289" class="arrow-skip" fill="none"/>
+  <!-- e1 → SG-PID1 P -->
+  <path d="M120,153 L510,183" class="arrow-skip" fill="none"/>
+
+  <!-- BOTTLENECK → SG-PID4 (I path) -->
+  <path d="M128,622 Q350,622 510,500" class="arrow" fill="none"/>
+
+  <!-- d4 → SG-PID3 (I path) -->
+  <line x1="570" y1="472" x2="570" y2="424" class="arrow"/>
+  <!-- d3 → SG-PID2 (I path) -->
+  <line x1="570" y1="366" x2="570" y2="318" class="arrow"/>
+  <!-- d2 → SG-PID1 (I path) -->
+  <line x1="570" y1="260" x2="570" y2="212" class="arrow"/>
+
+  <!-- ============================================================ -->
+  <!-- BOUNDARY MAP → all SG-PID blocks -->
+  <!-- ============================================================ -->
+  <!-- A single vertical line from SBS down and horizontal to each decoder block -->
+  <line x1="425" y1="598" x2="425" y2="183" stroke="#9d7fff" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="425" y1="501" x2="510" y2="501" class="arrow-bound" fill="none"/>
+  <line x1="425" y1="395" x2="510" y2="395" class="arrow-bound" fill="none"/>
+  <line x1="425" y1="289" x2="510" y2="289" class="arrow-bound" fill="none"/>
+  <line x1="425" y1="183" x2="510" y2="183" class="arrow-bound" fill="none"/>
+  <!-- label for boundary map -->
+  <text x="405" y="390" class="dim-label" fill="#9d7fff" transform="rotate(-90,405,390)" font-size="9">b_map (1ch)</text>
+
+  <!-- ============================================================ -->
+  <!-- DEEP SUPERVISION HEADS -->
+  <!-- ============================================================ -->
+  <!-- head4 -->
+  <rect x="680" y="482" width="70" height="34" rx="4" fill="url(#gHead)" stroke="#33ff88" stroke-width="1"/>
+  <text x="715" y="496" class="block-label" font-size="9">Head₄</text>
+  <text x="715" y="507" class="dim-label">Conv1×1→1</text>
+  <line x1="630" y1="501" x2="680" y2="501" class="arrow"/>
+
+  <!-- head3 -->
+  <rect x="680" y="376" width="70" height="34" rx="4" fill="url(#gHead)" stroke="#33ff88" stroke-width="1"/>
+  <text x="715" y="390" class="block-label" font-size="9">Head₃</text>
+  <text x="715" y="401" class="dim-label">Conv1×1→1</text>
+  <line x1="630" y1="395" x2="680" y2="395" class="arrow"/>
+
+  <!-- head2 -->
+  <rect x="680" y="270" width="70" height="34" rx="4" fill="url(#gHead)" stroke="#33ff88" stroke-width="1"/>
+  <text x="715" y="284" class="block-label" font-size="9">Head₂</text>
+  <text x="715" y="295" class="dim-label">Conv1×1→1</text>
+  <line x1="630" y1="289" x2="680" y2="289" class="arrow"/>
+
+  <!-- head1 (main) -->
+  <rect x="680" y="164" width="70" height="34" rx="4" fill="url(#gHead)" stroke="#33ff88" stroke-width="2"/>
+  <text x="715" y="178" class="block-label" font-size="9">Head₁ (main)</text>
+  <text x="715" y="189" class="dim-label">Conv1×1→1</text>
+  <line x1="630" y1="183" x2="680" y2="183" class="arrow"/>
+
+  <!-- OUTPUT (upsample to 352×352) -->
+  <rect x="755" y="10" width="90" height="34" rx="5" fill="#1e2a40" stroke="#33ff88" stroke-width="1.5"/>
+  <text x="800" y="22" class="block-label" font-size="9">Output Mask</text>
+  <text x="800" y="34" class="dim-label">1×352×352</text>
+  <!-- head1 → output -->
+  <path d="M800,164 L800,44" class="arrow" fill="none"/>
+
+  <!-- ============================================================ -->
+  <!-- LEGEND -->
+  <!-- ============================================================ -->
+  <rect x="22" y="662" width="816" height="52" rx="6" fill="#141a24" stroke="#2a3a4a" stroke-width="1"/>
+  <text x="430" y="676" text-anchor="middle" fill="#8090a0" font-size="10" font-weight="bold">LEGEND</text>
+  <!-- main flow -->
+  <line x1="30" y1="690" x2="65" y2="690" class="arrow"/>
+  <text x="70" y="693" fill="#aac0d0" font-size="10" dominant-baseline="middle">Main flow</text>
+  <!-- skip -->
+  <line x1="145" y1="690" x2="180" y2="690" class="arrow-skip"/>
+  <text x="185" y="693" fill="#aac0d0" font-size="10" dominant-baseline="middle">Skip (encoder→P)</text>
+  <!-- boundary -->
+  <line x1="310" y1="690" x2="345" y2="690" class="arrow-bound"/>
+  <text x="350" y="693" fill="#aac0d0" font-size="10" dominant-baseline="middle">Boundary map</text>
+  <!-- colors -->
+  <rect x="470" y="683" width="12" height="12" rx="2" fill="#1a5a3f" stroke="#2ecc71" stroke-width="1"/>
+  <text x="486" y="693" fill="#aac0d0" font-size="10" dominant-baseline="middle">AsymRFB Encoder</text>
+  <rect x="600" y="683" width="12" height="12" rx="2" fill="#6a3a00" stroke="#ffaa33" stroke-width="1"/>
+  <text x="616" y="693" fill="#aac0d0" font-size="10" dominant-baseline="middle">SG-PID Block</text>
+  <rect x="700" y="683" width="12" height="12" rx="2" fill="#7f1a1a" stroke="#ff4444" stroke-width="1"/>
+  <text x="716" y="693" fill="#aac0d0" font-size="10" dominant-baseline="middle">Bottleneck</text>
+</svg>
+</body>
+</html>

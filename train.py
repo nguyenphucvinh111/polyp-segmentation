@@ -141,7 +141,7 @@ def train_single_run(args, seed: int, run_name: str = None) -> dict:
                               # trains the last singleton batch (164 updates/epoch).
                               drop_last=(args.model not in PID_V2_MODELS or
                                          args.model.startswith('pid_hardgate_ablation_') or
-                                         args.model == 'pid_unet_v2_hardgate'))
+                                         args.model in ('pid_unet_v2_hardgate', 'pid_unet')))
     val_loader = DataLoader(Subset(val_ds, val_ids), batch_size=args.batchsize,
                             shuffle=False, num_workers=num_workers)
     with open(log_root / f'{tag}_config.json', 'w', encoding='utf-8') as handle:
