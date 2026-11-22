@@ -222,8 +222,9 @@ class SoftPIDBAG(nn.Module):
     4. Adaptive PID Controller: Allocates frame-specific weights (Kp, Ki, Kd).
     5. SE Channel Recalibration & Residual Shortcut (+ i_proj).
     """
-    def __init__(self, p_channels: int, i_channels: int, out_channels: int):
+    def __init__(self, p_channels: int, i_channels: int, out_channels: int, legacy_v2: bool = False):
         super().__init__()
+        self.legacy_v2 = legacy_v2
         self.proj_p = nn.Sequential(
             nn.Conv2d(p_channels, out_channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(out_channels),
@@ -270,7 +271,7 @@ class SoftPIDBAG(nn.Module):
         # 2. D Component: Discrete Laplacian difference modulated by boundary attention & soft gate
         p_diff = torch.abs(p_proj - self.diff_pool(p_proj))
         edge_att = torch.sigmoid(boundary_map)
-        d_comp = p_diff * edge_att * soft_gate
+        d_comp = p_diff * edge_att * (sal_mask if self.legacy_v2 else soft_gate)
 
         # 3. Dynamic PID Controller Weighting
         kp, ki, kd = self.pid_gate(i_feat)
@@ -336,7 +337,7 @@ class EnhancedTinyPIDUNet(nn.Module):
     - 5-Scale Boundary Branch: Multi-resolution lesion boundary detection.
     Total Parameters: ~0.805M (< 1.0M).
     """
-    def __init__(self, in_channels: int = 3, n_classes: int = 1, base_c: int = 32):
+    def __init__(self, in_channels: int = 3, n_classes: int = 1, base_c: int = 32, legacy_v2: bool = False):
         super().__init__()
         c1 = base_c          # 32
         c2 = base_c * 2      # 64
@@ -363,16 +364,17 @@ class EnhancedTinyPIDUNet(nn.Module):
         self.down4 = InfoPreservingDownsample(c4, c5)
 
         # ----------------- Hybrid Bottleneck (Dilations 1, 2, 4, 8 + Global Context) ------
-        self.bottleneck = AsymmetricRFB(c5, c5, dilations=(1, 2, 4, 8), dropout_p=0.05, use_global=True)
+        rates = (1, 3, 6, 12) if legacy_v2 else (1, 2, 4, 8)
+        self.bottleneck = AsymmetricRFB(c5, c5, dilations=rates, dropout_p=0.05, use_global=not legacy_v2)
 
         # ----------------- 5-Scale Derivative Boundary Stream (e1, e2, e3, e4, i_feat) -----
         self.boundary_branch = SemanticBoundaryBranch(c1, c2, c3, c4, c5, d_channels=24)
 
         # ----------------- Decoder with Soft Semantic PID Attention (SoftPIDBAG v5) --------
-        self.bag4 = SoftPIDBAG(p_channels=c4, i_channels=c5, out_channels=c4)
-        self.bag3 = SoftPIDBAG(p_channels=c3, i_channels=c4, out_channels=c3)
-        self.bag2 = SoftPIDBAG(p_channels=c2, i_channels=c3, out_channels=c2)
-        self.bag1 = SoftPIDBAG(p_channels=c1, i_channels=c2, out_channels=c1)
+        self.bag4 = SoftPIDBAG(p_channels=c4, i_channels=c5, out_channels=c4, legacy_v2=legacy_v2)
+        self.bag3 = SoftPIDBAG(p_channels=c3, i_channels=c4, out_channels=c3, legacy_v2=legacy_v2)
+        self.bag2 = SoftPIDBAG(p_channels=c2, i_channels=c3, out_channels=c2, legacy_v2=legacy_v2)
+        self.bag1 = SoftPIDBAG(p_channels=c1, i_channels=c2, out_channels=c1, legacy_v2=legacy_v2)
 
         # ----------------- Deep Supervision Heads ------------------------------------------
         self.head4 = nn.Conv2d(c4, n_classes, kernel_size=1)

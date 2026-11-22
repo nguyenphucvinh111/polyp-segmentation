@@ -3,10 +3,10 @@ Copy this file into models/ as pid_unet.py. Training-name mapping
 in _pid_family.py and train.py must also include pid_unet.
 """
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +308,6 @@ class SemanticBoundaryBranch(nn.Module):
 # Full Network: Enhanced Tiny PID-UNet (< 1M Parameters, Flagship Version 5)
 # ---------------------------------------------------------------------------
 
-
 class EnhancedTinyPIDUNet(nn.Module):
     """
     Enhanced Tiny PID-UNet for High-Precision Polyp Segmentation (< 1M Parameters).
@@ -392,14 +391,9 @@ class EnhancedTinyPIDUNet(nn.Module):
 
         return ((out4, out3, out2, out1), b_map) if return_aux else (out4, out3, out2, out1)
 
-import math
-import torch
-from torch import nn
-
 
 class BoundedPIDBlock(SoftPIDBAG):
     def forward(self, p_feat, i_feat, boundary_map):
-        import torch.nn.functional as F
         size = p_feat.shape[2:]
         i_feat = F.interpolate(i_feat, size=size, mode="bilinear", align_corners=True)
         boundary_map = F.interpolate(boundary_map, size=size, mode="bilinear", align_corners=True)
@@ -411,10 +405,12 @@ class BoundedPIDBlock(SoftPIDBAG):
         kp, ki, kd = self.pid_gate(i_feat)
         return self.fuse(self.se(kp*p*gate + ki*i + kd*d)) + i
 
+
 class GlobalContext(nn.Module):
     def __init__(self, channels):
         super().__init__()
         self.net = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Conv2d(channels, 24, 1), nn.ReLU(), nn.Conv2d(24, channels, 1))
+
     def forward(self, x):
         return x + self.net(x)
 
@@ -436,9 +432,6 @@ class PIDUNetV2(EnhancedTinyPIDUNet):
             self.bottleneck = nn.Sequential(self.bottleneck, GlobalContext(192))
         assert sum(p.numel() for p in self.parameters()) < 1_000_000
 
-import torch
-from torch import nn
-import torch.nn.functional as F
 
 class HardGatePIDBlock(BoundedPIDBlock):
     """PID block with Hard Saliency Gating (gate = sal) without learned soft baseline floor."""
@@ -472,7 +465,6 @@ class PIDUNetV2_HardGate(PIDUNetV2):
         assert sum(p.numel() for p in self.parameters()) < 1_000_000
 
 
-
 # Only the public name changes; constructor and forward are inherited unchanged.
 try:
     from models import register_model
@@ -481,6 +473,7 @@ except ImportError:
         return lambda cls: cls
 
 @register_model("pid_unet")
+@register_model("pid_unet_v2_hardgate")
 class PIDUnet(PIDUNetV2_HardGate):
     pass
 
