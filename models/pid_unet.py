@@ -8,10 +8,10 @@ FPS: 46.93 FPS on NVIDIA Tesla T4 (Real-time >= 30 FPS)
 Performance: 0.7972 Mean Dice across 5 standard benchmarks (CVC-300: 0.8366, ETIS: 0.6380).
 
 Key Architectural Components:
-1. Multi-scale AsymmetricRFB Encoder: Factorized 3x1 and 1x3 convolutions with dilations and SE.
-2. Info-Preserving Downsampler (IPD): Dual-path Conv (stride 2) || MaxPool concat prevents lesion extinction.
-3. Hybrid Context Bottleneck (HARF-GC): RFB (dilations 1, 2, 4, 8) + GlobalContext additive pooling.
-4. 5-Scale Semantic Boundary Stream (SBS): Aggregates e1..e4 and bottleneck to predict boundary prior.
+1. AsymmetricRFB Encoder: Factorized 3x1 and 1x3 convolutions with dilations and SE.
+2. Info-Preserving Downsampler (IPD): Dual-path Conv (stride 2) || MaxPool concat.
+3. Hybrid Bottleneck (HARF-GC): RFB (dilations 1, 2, 4, 8) + GlobalContext additive pooling.
+4. 5-Scale Semantic Boundary Stream (SBS): Multi-scale encoder features -> boundary map.
 5. Saliency-Gated PID Decoder Blocks (SG-PID): P, I, D synthesis with Hard Saliency Gate (gate = sal).
 6. Dynamic PID Controller: Image-level adaptive gain allocation (Kp + Ki + Kd = 1.0).
 """
@@ -19,7 +19,6 @@ Key Architectural Components:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 try:
     from models import register_model
 except ImportError:
@@ -255,6 +254,7 @@ class HardGatePIDBlock(nn.Module):
             nn.Conv2d(mid_c, 1, kernel_size=1, bias=False),
             nn.Sigmoid()
         )
+        # Kept for strict checkpoint compatibility (unused in forward)
         self.alpha = nn.Parameter(torch.tensor(0.35))
         self.diff_pool = nn.AvgPool2d(kernel_size=3, stride=1, padding=1)
         self.pid_gate = AdaptivePIDGating(i_channels)
@@ -272,10 +272,14 @@ class HardGatePIDBlock(nn.Module):
         p = self.proj_p(p_feat)
         i = self.proj_i(i_feat)
 
+        # Hard Saliency Gate directly from predicted foreground probability
         gate = sal
+        # Derivative (D): Discrete Laplacian modulated by boundary and hard saliency gate
         d = (p - self.diff_pool(p)).abs() * boundary_map.sigmoid() * gate
+        # Dynamic Gain Allocation
         kp, ki, kd = self.pid_gate(i_feat)
 
+        # Fused PID features + Residual semantic highway
         return self.fuse(self.se(kp * p * gate + ki * i + kd * d)) + i
 
 
@@ -320,7 +324,7 @@ class SemanticBoundaryBranch(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# 9. Complete Architecture: PID-UNet (Flagship Proposed Model)
+# 9. Complete Standalone Architecture: PID-UNet (Flagship Model)
 # ---------------------------------------------------------------------------
 
 @register_model("pid_unet")
@@ -410,122 +414,19 @@ class PIDUNet(nn.Module):
         return ((out4, out3, out2, out1), b_map) if return_aux else (out4, out3, out2, out1)
 
 
-# Aliases
+# Backward compatibility aliases
 PIDUNetV2_HardGate = PIDUNet
 PIDUNet_HardGate = PIDUNet
 
 
-# ---------------------------------------------------------------------------
-# Legacy Support: Retained strictly for backward compatibility with pid_unet_v2
-# ---------------------------------------------------------------------------
-
-class SoftPIDBAG(nn.Module):
-    """Legacy SoftPIDBAG retained for pid_unet_v2 inheritance."""
-    def __init__(self, p_channels: int, i_channels: int, out_channels: int, legacy_v2: bool = False):
-        super().__init__()
-        self.legacy_v2 = legacy_v2
-        self.proj_p = nn.Sequential(
-            nn.Conv2d(p_channels, out_channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-        self.proj_i = nn.Sequential(
-            nn.Conv2d(i_channels, out_channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-        mid_c = max(16, out_channels // 2)
-        self.saliency_gate = nn.Sequential(
-            nn.Conv2d(i_channels, mid_c, kernel_size=1, bias=False),
-            nn.BatchNorm2d(mid_c),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(mid_c, 1, kernel_size=1, bias=False),
-            nn.Sigmoid()
-        )
-        self.alpha = nn.Parameter(torch.tensor(0.35))
-        self.diff_pool = nn.AvgPool2d(kernel_size=3, stride=1, padding=1)
-        self.pid_gate = AdaptivePIDGating(i_channels)
-        self.se = SqueezeExcitation(out_channels)
-        self.fuse = AsymmetricConv(out_channels, out_channels, dilation=1)
-
-    def forward(self, p_feat: torch.Tensor, i_feat: torch.Tensor, boundary_map: torch.Tensor) -> torch.Tensor:
-        h, w = p_feat.shape[2:]
-        if i_feat.shape[2:] != (h, w):
-            i_feat = F.interpolate(i_feat, size=(h, w), mode='bilinear', align_corners=True)
-        if boundary_map.shape[2:] != (h, w):
-            boundary_map = F.interpolate(boundary_map, size=(h, w), mode='bilinear', align_corners=True)
-        sal_mask = self.saliency_gate(i_feat)
-        p_proj = self.proj_p(p_feat)
-        i_proj = self.proj_i(i_feat)
-        alpha = torch.clamp(self.alpha, 0.0, 0.6)
-        soft_gate = alpha + (1.0 - alpha) * sal_mask
-        p_gated = p_proj * soft_gate
-        p_diff = torch.abs(p_proj - self.diff_pool(p_proj))
-        edge_att = torch.sigmoid(boundary_map)
-        d_comp = p_diff * edge_att * (sal_mask if self.legacy_v2 else soft_gate)
-        kp, ki, kd = self.pid_gate(i_feat)
-        f_pid = kp * p_gated + ki * i_proj + kd * d_comp
-        fused = self.fuse(self.se(f_pid))
-        return fused + i_proj
-
-
-class EnhancedTinyPIDUNet(nn.Module):
-    """Legacy EnhancedTinyPIDUNet retained for pid_unet_v2 inheritance."""
-    def __init__(self, in_channels: int = 3, n_classes: int = 1, base_c: int = 32, legacy_v2: bool = False):
-        super().__init__()
-        c1, c2, c3, c4, c5 = base_c, base_c * 2, base_c * 3, base_c * 4, base_c * 6
-        self.inc = nn.Sequential(
-            nn.Conv2d(in_channels, c1, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(c1),
-            nn.ReLU(inplace=True)
-        )
-        self.enc1 = AsymmetricRFB(c1, c1, dilations=(1, 2))
-        self.down1 = InfoPreservingDownsample(c1, c2)
-        self.enc2 = AsymmetricRFB(c2, c2, dilations=(1, 2, 4))
-        self.down2 = InfoPreservingDownsample(c2, c3)
-        self.enc3 = AsymmetricRFB(c3, c3, dilations=(1, 2, 4))
-        self.down3 = InfoPreservingDownsample(c3, c4)
-        self.enc4 = AsymmetricRFB(c4, c4, dilations=(1, 2, 4))
-        self.down4 = InfoPreservingDownsample(c4, c5)
-        rates = (1, 3, 6, 12) if legacy_v2 else (1, 2, 4, 8)
-        self.bottleneck = AsymmetricRFB(c5, c5, dilations=rates, dropout_p=0.05, use_global=not legacy_v2)
-        self.boundary_branch = SemanticBoundaryBranch(c1, c2, c3, c4, c5, d_channels=24)
-        self.bag4 = SoftPIDBAG(p_channels=c4, i_channels=c5, out_channels=c4, legacy_v2=legacy_v2)
-        self.bag3 = SoftPIDBAG(p_channels=c3, i_channels=c4, out_channels=c3, legacy_v2=legacy_v2)
-        self.bag2 = SoftPIDBAG(p_channels=c2, i_channels=c3, out_channels=c2, legacy_v2=legacy_v2)
-        self.bag1 = SoftPIDBAG(p_channels=c1, i_channels=c2, out_channels=c1, legacy_v2=legacy_v2)
-        self.head4 = nn.Conv2d(c4, n_classes, kernel_size=1)
-        self.head3 = nn.Conv2d(c3, n_classes, kernel_size=1)
-        self.head2 = nn.Conv2d(c2, n_classes, kernel_size=1)
-        self.head1 = nn.Conv2d(c1, n_classes, kernel_size=1)
-
-    def forward(self, x: torch.Tensor, return_aux=False):
-        sz = x.shape[2:]
-        x0 = self.inc(x)
-        e1 = self.enc1(x0)
-        e2 = self.enc2(self.down1(e1))
-        e3 = self.enc3(self.down2(e2))
-        e4 = self.enc4(self.down3(e3))
-        i_feat = self.bottleneck(self.down4(e4))
-        b_map = self.boundary_branch(e1, e2, e3, e4, i_feat)
-        d4 = self.bag4(e4, i_feat, b_map)
-        d3 = self.bag3(e3, d4, b_map)
-        d2 = self.bag2(e2, d3, b_map)
-        d1 = self.bag1(e1, d2, b_map)
-        out4 = F.interpolate(self.head4(d4), size=sz, mode='bilinear', align_corners=True)
-        out3 = F.interpolate(self.head3(d3), size=sz, mode='bilinear', align_corners=True)
-        out2 = F.interpolate(self.head2(d2), size=sz, mode='bilinear', align_corners=True)
-        out1 = self.head1(d1)
-        return ((out4, out3, out2, out1), b_map) if return_aux else (out4, out3, out2, out1)
-
-
+# Quick verification when executed directly
 if __name__ == "__main__":
     model = PIDUNet()
     x = torch.randn(2, 3, 352, 352)
     outs, b = model(x, return_aux=True)
     total_params = sum(p.numel() for p in model.parameters())
     print("=" * 60)
-    print(f"PID-UNet Standalone Verification:")
+    print(f"PID-UNet (pid_unet / pid_unet_v2_hardgate) Standalone Verification:")
     print(f"Total Parameters: {total_params:,} ({total_params/1e6:.3f}M)")
     print(f"Outputs: {[o.shape for o in outs]}")
     print(f"Boundary map: {b.shape}")

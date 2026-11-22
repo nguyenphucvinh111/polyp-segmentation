@@ -3,7 +3,7 @@ import math
 import torch
 from torch import nn
 from models import register_model
-from models.pid_unet import EnhancedTinyPIDUNet, SoftPIDBAG
+from models._hardgate_base import EnhancedTinyPIDUNet, SoftPIDBAG
 
 class BoundedPIDBlock(SoftPIDBAG):
     def forward(self, p_feat, i_feat, boundary_map):

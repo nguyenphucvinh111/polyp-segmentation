@@ -62,7 +62,7 @@ class V2AblationTests(unittest.TestCase):
             self.assertEqual(get_model(name).variant, variant)
 
     def test_v2_keeps_historical_backbone_and_handles_singleton_batch(self):
-        from models.pid_unet import EnhancedTinyPIDUNet
+        from models._hardgate_base import EnhancedTinyPIDUNet
         model = PIDUNetV2().train()
         self.assertEqual(sum(p.numel() for p in model.parameters()), 835373)
         self.assertFalse(model.bottleneck[0].use_global)
