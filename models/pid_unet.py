@@ -1,39 +1,23 @@
-"""
-PID-UNet: Saliency-Guided PID Feature Fusion for Sub-Million-Parameter Polyp Segmentation.
-Flagship Proposed Architecture (< 1M Parameters, Real-Time Edge Deployment).
-
-Total Parameters: 814,573 (~0.815M, strictly < 1.0M)
-FLOPs: 6.63 GFLOPs at 352x352
-FPS: 46.93 FPS on NVIDIA Tesla T4 (Real-time >= 30 FPS)
-Performance: 0.7972 Mean Dice across 5 standard benchmarks (CVC-300: 0.8366, ETIS: 0.6380).
-
-Key Architectural Components:
-1. AsymmetricRFB Encoder: Factorized 3x1 and 1x3 convolutions with dilations and SE.
-2. Info-Preserving Downsampler (IPD): Dual-path Conv (stride 2) || MaxPool concat.
-3. Hybrid Bottleneck (HARF-GC): RFB (dilations 1, 2, 4, 8) + GlobalContext additive pooling.
-4. 5-Scale Semantic Boundary Stream (SBS): Multi-scale encoder features -> boundary map.
-5. Saliency-Gated PID Decoder Blocks (SG-PID): P, I, D synthesis with Hard Saliency Gate (gate = sal).
-6. Dynamic PID Controller: Image-level adaptive gain allocation (Kp + Ki + Kd = 1.0).
+"""PIDUnet: exact frozen hardgate construction, including RNG consumption.
+Copy this file into models/ as pid_unet.py. Training-name mapping
+in _pid_family.py and train.py must also include pid_unet.
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-try:
-    from models import register_model
-except ImportError:
-    def register_model(name: str):
-        def decorator(cls):
-            return cls
-        return decorator
+
 
 
 # ---------------------------------------------------------------------------
-# 1. Squeeze-and-Excitation (SE) Channel Recalibration
+# Squeeze-and-Excitation (SE) Channel Recalibration Module
 # ---------------------------------------------------------------------------
 
 class SqueezeExcitation(nn.Module):
-    """Channel-wise feature recalibration to suppress normal mucosa channels."""
+    """
+    Squeeze-and-Excitation block for dynamic channel-wise feature recalibration.
+    Suppresses normal mucosal background channels while boosting lesion-sensitive responses.
+    """
     def __init__(self, channels: int, reduction: int = 8):
         super().__init__()
         reduced = max(8, channels // reduction)
@@ -50,7 +34,7 @@ class SqueezeExcitation(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# 2. Asymmetric Factorized Convolution (3x1 followed by 1x3)
+# Asymmetric Factorized Convolution (3x1 followed by 1x3)
 # ---------------------------------------------------------------------------
 
 class AsymmetricConv(nn.Module):
@@ -81,13 +65,13 @@ class AsymmetricConv(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# 3. Information-Preserving Downsampler (Dual-Path Conv + MaxPool Concat)
+# Information-Preserving Downsampler (Dual-Path Conv + MaxPool Concat)
 # ---------------------------------------------------------------------------
 
 class InfoPreservingDownsample(nn.Module):
     """
-    Prevents spatial annihilation of diminutive lesions (< 20px) during downsampling.
-    Combines learned strided convolution with localized max-pooling.
+    Prevents loss of diminutive polyps during resolution reduction.
+    Combines learned strided convolution with localized max pooling.
     """
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
@@ -111,7 +95,7 @@ class InfoPreservingDownsample(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# 4. Multi-Scale Asymmetric Receptive Field Block (AsymRFB)
+# Multi-Scale Asymmetric Receptive Field Block with Optional Global Context
 # ---------------------------------------------------------------------------
 
 class AsymmetricRFB(nn.Module):
@@ -175,32 +159,15 @@ class AsymmetricRFB(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# 5. Global Context Bottleneck Residual Module
-# ---------------------------------------------------------------------------
-
-class GlobalContext(nn.Module):
-    """Image-level illumination context enhancement at bottleneck."""
-    def __init__(self, channels: int):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(channels, 24, 1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(24, channels, 1)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.net(x)
-
-
-# ---------------------------------------------------------------------------
-# 6. Dynamic Self-Tuning PID Controller Module
+# Dynamic Self-Tuning PID Controller Module
 # ---------------------------------------------------------------------------
 
 class AdaptivePIDGating(nn.Module):
     """
-    Dynamically predicts per-frame gains (Kp, Ki, Kd) using global feature statistics.
-    Ensures Kp + Ki + Kd = 1.0 via Softmax.
+    Dynamic Self-Tuning PID Controller Module:
+    Learns dynamic gains (Kp, Ki, Kd) based on the image's global feature context.
+    - Diminutive / hard lesions (ETIS): Automatically boosts Kd (boundary) and Kp (fine spatial detail).
+    - Large / obvious lesions: Boosts Ki (integral global semantics) for uniform coverage.
     """
     def __init__(self, in_channels: int):
         super().__init__()
@@ -209,7 +176,7 @@ class AdaptivePIDGating(nn.Module):
             nn.Linear(in_channels, 16, bias=False),
             nn.ReLU(inplace=True),
             nn.Linear(16, 3, bias=False),
-            nn.Softmax(dim=1)
+            nn.Softmax(dim=1)  # Kp + Ki + Kd = 1.0
         )
 
     def forward(self, context_feat: torch.Tensor):
@@ -223,16 +190,19 @@ class AdaptivePIDGating(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# 7. Saliency-Gated PID Attention Block (HardGatePIDBlock)
+# Soft Semantic PID Attention Block (SoftPIDBAG v5)
 # ---------------------------------------------------------------------------
 
-class HardGatePIDBlock(nn.Module):
+class SoftPIDBAG(nn.Module):
     """
-    The Core Proposed Module: Saliency-Gated PID (SG-PID) Block with Hard Gate.
-    - Proportional (P): p_gated = Proj_P(P) * gate
-    - Derivative (D):   d = |Proj_P(P) - AvgPool(Proj_P(P))| * sigmoid(boundary) * gate
-    - Integral (I):     deep context with residual highway (+ Proj_I(I))
-    - Hard Saliency Gate: gate = sal = sigmoid(Conv(I)) without learned soft baseline floor.
+    Soft Semantic PID Attention Guidance Block (Flagship v5):
+    1. Proportional (P): Soft-gated skip features with learnable baseline alpha:
+       `p_gated = p_proj * (alpha + (1-alpha)*sal_mask)`
+    2. Derivative (D): High-frequency discrete Laplacian (|P - AvgPool(P)|) modulated
+       by boundary attention AND soft gate to prevent silencing tiny lesions in ETIS.
+    3. Integral (I): Accumulated multi-scale context from the deeper decoder stage.
+    4. Adaptive PID Controller: Allocates frame-specific weights (Kp, Ki, Kd).
+    5. SE Channel Recalibration & Residual Shortcut (+ i_proj).
     """
     def __init__(self, p_channels: int, i_channels: int, out_channels: int):
         super().__init__()
@@ -246,6 +216,7 @@ class HardGatePIDBlock(nn.Module):
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
         )
+        # Saliency gate from I context: filters out false-alarm mucosal folds
         mid_c = max(16, out_channels // 2)
         self.saliency_gate = nn.Sequential(
             nn.Conv2d(i_channels, mid_c, kernel_size=1, bias=False),
@@ -254,43 +225,53 @@ class HardGatePIDBlock(nn.Module):
             nn.Conv2d(mid_c, 1, kernel_size=1, bias=False),
             nn.Sigmoid()
         )
-        # Kept for strict checkpoint compatibility (unused in forward)
+        # Learnable soft gate floor: init 0.35 (preserves signal in flat/diminutive lesions)
         self.alpha = nn.Parameter(torch.tensor(0.35))
+        # High-pass difference operator for Derivative (D)
         self.diff_pool = nn.AvgPool2d(kernel_size=3, stride=1, padding=1)
         self.pid_gate = AdaptivePIDGating(i_channels)
         self.se = SqueezeExcitation(out_channels)
         self.fuse = AsymmetricConv(out_channels, out_channels, dilation=1)
 
     def forward(self, p_feat: torch.Tensor, i_feat: torch.Tensor, boundary_map: torch.Tensor) -> torch.Tensor:
-        size = p_feat.shape[2:]
-        if i_feat.shape[2:] != size:
-            i_feat = F.interpolate(i_feat, size=size, mode="bilinear", align_corners=True)
-        if boundary_map.shape[2:] != size:
-            boundary_map = F.interpolate(boundary_map, size=size, mode="bilinear", align_corners=True)
+        h, w = p_feat.shape[2:]
+        if i_feat.shape[2:] != (h, w):
+            i_feat = F.interpolate(i_feat, size=(h, w), mode='bilinear', align_corners=True)
+        if boundary_map.shape[2:] != (h, w):
+            boundary_map = F.interpolate(boundary_map, size=(h, w), mode='bilinear', align_corners=True)
 
-        sal = self.saliency_gate(i_feat)
-        p = self.proj_p(p_feat)
-        i = self.proj_i(i_feat)
+        sal_mask = self.saliency_gate(i_feat)
+        p_proj = self.proj_p(p_feat)
+        i_proj = self.proj_i(i_feat)
 
-        # Hard Saliency Gate directly from predicted foreground probability
-        gate = sal
-        # Derivative (D): Discrete Laplacian modulated by boundary and hard saliency gate
-        d = (p - self.diff_pool(p)).abs() * boundary_map.sigmoid() * gate
-        # Dynamic Gain Allocation
+        # 1. P Component: Soft gate — retains min `alpha` baseline even in ambiguous background
+        alpha = torch.clamp(self.alpha, 0.0, 0.6)
+        soft_gate = alpha + (1.0 - alpha) * sal_mask
+        p_gated = p_proj * soft_gate
+
+        # 2. D Component: Discrete Laplacian difference modulated by boundary attention & soft gate
+        p_diff = torch.abs(p_proj - self.diff_pool(p_proj))
+        edge_att = torch.sigmoid(boundary_map)
+        d_comp = p_diff * edge_att * soft_gate
+
+        # 3. Dynamic PID Controller Weighting
         kp, ki, kd = self.pid_gate(i_feat)
+        f_pid = kp * p_gated + ki * i_proj + kd * d_comp
 
-        # Fused PID features + Residual semantic highway
-        return self.fuse(self.se(kp * p * gate + ki * i + kd * d)) + i
+        # 4. Channel recalibration, asymmetric convolution, and residual shortcut
+        fused = self.fuse(self.se(f_pid))
+        return fused + i_proj
 
 
 # ---------------------------------------------------------------------------
-# 8. 5-Scale Semantic Boundary Branch (SBS)
+# 5-Scale Semantic Boundary Branch (e1, e2, e3, e4, i_feat)
 # ---------------------------------------------------------------------------
 
 class SemanticBoundaryBranch(nn.Module):
     """
-    Aggregates multi-scale encoder cues (e1, e2, e3, e4) with deep semantic context (i_feat).
-    Generates auxiliary boundary probability map b.
+    5-Scale Derivative Boundary Branch with Semantic Filtering:
+    Combines multi-scale encoder cues (e1, e2, e3, e4) with deep semantic guidance (i_feat).
+    Ensures that boundary detection fires at true lesion edges, NOT normal mucosal folds.
     """
     def __init__(self, c1: int, c2: int, c3: int, c4: int, c5: int, d_channels: int = 24):
         super().__init__()
@@ -302,7 +283,7 @@ class SemanticBoundaryBranch(nn.Module):
 
         self.fuse = nn.Sequential(
             AsymmetricConv(d_channels * 5, d_channels, dilation=1),
-            nn.Conv2d(d_channels, 1, kernel_size=1)
+            nn.Conv2d(d_channels, 1, kernel_size=1)  # 1-channel boundary logits
         )
 
     def forward(
@@ -324,15 +305,18 @@ class SemanticBoundaryBranch(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# 9. Complete Standalone Architecture: PID-UNet (Flagship Model)
+# Full Network: Enhanced Tiny PID-UNet (< 1M Parameters, Flagship Version 5)
 # ---------------------------------------------------------------------------
 
-@register_model("pid_unet")
-@register_model("pid_unet_v2_hardgate")
-class PIDUNet(nn.Module):
+
+class EnhancedTinyPIDUNet(nn.Module):
     """
-    Flagship Architecture: PID-UNet (formerly pid_unet_v2_hardgate).
-    Sub-1M parameters (814,573 params), Real-Time (46.93 FPS on Tesla T4).
+    Enhanced Tiny PID-UNet for High-Precision Polyp Segmentation (< 1M Parameters).
+    Flagship Version 5:
+    - SoftPIDBAG v5: Soft-gated derivative prevents silencing diminutive lesions in ETIS.
+    - Hybrid RFB Bottleneck: Multi-scale dilations (1, 2, 4, 8) + Global Context Pooling.
+    - 5-Scale Boundary Branch: Multi-resolution lesion boundary detection.
+    Total Parameters: ~0.805M (< 1.0M).
     """
     def __init__(self, in_channels: int = 3, n_classes: int = 1, base_c: int = 32):
         super().__init__()
@@ -342,7 +326,7 @@ class PIDUNet(nn.Module):
         c4 = base_c * 4      # 128
         c5 = base_c * 6      # 192
 
-        # ----------------- Encoder -----------------
+        # ----------------- Stem & Encoder with SE-Asymmetric RFB -----------------
         self.inc = nn.Sequential(
             nn.Conv2d(in_channels, c1, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(c1),
@@ -360,30 +344,25 @@ class PIDUNet(nn.Module):
         self.enc4 = AsymmetricRFB(c4, c4, dilations=(1, 2, 4))
         self.down4 = InfoPreservingDownsample(c4, c5)
 
-        # ----------------- Bottleneck (HARF-GC) -----------------
-        self.bottleneck = nn.Sequential(
-            AsymmetricRFB(c5, c5, dilations=(1, 2, 4, 8), dropout_p=0.05, use_global=True),
-            GlobalContext(c5)
-        )
+        # ----------------- Hybrid Bottleneck (Dilations 1, 2, 4, 8 + Global Context) ------
+        self.bottleneck = AsymmetricRFB(c5, c5, dilations=(1, 2, 4, 8), dropout_p=0.05, use_global=True)
 
-        # ----------------- 5-Scale Boundary Branch -----------------
+        # ----------------- 5-Scale Derivative Boundary Stream (e1, e2, e3, e4, i_feat) -----
         self.boundary_branch = SemanticBoundaryBranch(c1, c2, c3, c4, c5, d_channels=24)
 
-        # ----------------- Decoder (SG-PID Blocks) -----------------
-        self.bag4 = HardGatePIDBlock(p_channels=c4, i_channels=c5, out_channels=c4)
-        self.bag3 = HardGatePIDBlock(p_channels=c3, i_channels=c4, out_channels=c3)
-        self.bag2 = HardGatePIDBlock(p_channels=c2, i_channels=c3, out_channels=c2)
-        self.bag1 = HardGatePIDBlock(p_channels=c1, i_channels=c2, out_channels=c1)
+        # ----------------- Decoder with Soft Semantic PID Attention (SoftPIDBAG v5) --------
+        self.bag4 = SoftPIDBAG(p_channels=c4, i_channels=c5, out_channels=c4)
+        self.bag3 = SoftPIDBAG(p_channels=c3, i_channels=c4, out_channels=c3)
+        self.bag2 = SoftPIDBAG(p_channels=c2, i_channels=c3, out_channels=c2)
+        self.bag1 = SoftPIDBAG(p_channels=c1, i_channels=c2, out_channels=c1)
 
-        # ----------------- Deep Supervision Heads -----------------
+        # ----------------- Deep Supervision Heads ------------------------------------------
         self.head4 = nn.Conv2d(c4, n_classes, kernel_size=1)
         self.head3 = nn.Conv2d(c3, n_classes, kernel_size=1)
         self.head2 = nn.Conv2d(c2, n_classes, kernel_size=1)
         self.head1 = nn.Conv2d(c1, n_classes, kernel_size=1)
 
-        assert sum(p.numel() for p in self.parameters()) < 1_000_000
-
-    def forward(self, x: torch.Tensor, return_aux: bool = False):
+    def forward(self, x: torch.Tensor, return_aux=False):
         sz = x.shape[2:]
 
         # 1. Multi-scale asymmetric encoder forward
@@ -393,19 +372,19 @@ class PIDUNet(nn.Module):
         e3 = self.enc3(self.down2(e2)) # (B, 96, H/4, W/4)
         e4 = self.enc4(self.down3(e3)) # (B, 128, H/8, W/8)
 
-        # 2. Hybrid Context Bottleneck with Global Context
+        # 2. Hybrid Context Bottleneck (Dilations 1, 2, 4, 8 + Global Image Pooling)
         i_feat = self.bottleneck(self.down4(e4)) # (B, 192, H/16, W/16)
 
-        # 3. 5-Scale Semantic Boundary Map
+        # 3. 5-Scale Semantic Boundary Map (e1, e2, e3, e4, i_feat)
         b_map = self.boundary_branch(e1, e2, e3, e4, i_feat) # (B, 1, H/2, W/2)
 
-        # 4. Decoder with Hard Saliency-Gated PID Attention
+        # 4. Decoder with Soft Semantic PID Attention
         d4 = self.bag4(e4, i_feat, b_map)  # (B, 128, H/8, W/8)
         d3 = self.bag3(e3, d4, b_map)      # (B, 96, H/4, W/4)
         d2 = self.bag2(e2, d3, b_map)      # (B, 64, H/2, W/2)
         d1 = self.bag1(e1, d2, b_map)      # (B, 32, H, W)
 
-        # 5. Multi-Scale Deep Supervision (PraNet convention)
+        # 5. Multi-Scale Deep Supervision (PraNet 4-scale convention)
         out4 = F.interpolate(self.head4(d4), size=sz, mode='bilinear', align_corners=True)
         out3 = F.interpolate(self.head3(d3), size=sz, mode='bilinear', align_corners=True)
         out2 = F.interpolate(self.head2(d2), size=sz, mode='bilinear', align_corners=True)
@@ -413,22 +392,99 @@ class PIDUNet(nn.Module):
 
         return ((out4, out3, out2, out1), b_map) if return_aux else (out4, out3, out2, out1)
 
+import math
+import torch
+from torch import nn
 
-# Backward compatibility aliases
-PIDUNetV2_HardGate = PIDUNet
-PIDUNet_HardGate = PIDUNet
+
+class BoundedPIDBlock(SoftPIDBAG):
+    def forward(self, p_feat, i_feat, boundary_map):
+        import torch.nn.functional as F
+        size = p_feat.shape[2:]
+        i_feat = F.interpolate(i_feat, size=size, mode="bilinear", align_corners=True)
+        boundary_map = F.interpolate(boundary_map, size=size, mode="bilinear", align_corners=True)
+        sal = self.saliency_gate(i_feat)
+        p, i = self.proj_p(p_feat), self.proj_i(i_feat)
+        gate = .6 * self.alpha.sigmoid()
+        gate = gate + (1 - gate) * sal
+        d = (p - self.diff_pool(p)).abs() * boundary_map.sigmoid() * gate
+        kp, ki, kd = self.pid_gate(i_feat)
+        return self.fuse(self.se(kp*p*gate + ki*i + kd*d)) + i
+
+class GlobalContext(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.net = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Conv2d(channels, 24, 1), nn.ReLU(), nn.Conv2d(24, channels, 1))
+    def forward(self, x):
+        return x + self.net(x)
 
 
-# Quick verification when executed directly
-if __name__ == "__main__":
-    model = PIDUNet()
-    x = torch.randn(2, 3, 352, 352)
-    outs, b = model(x, return_aux=True)
-    total_params = sum(p.numel() for p in model.parameters())
-    print("=" * 60)
-    print(f"PID-UNet (pid_unet / pid_unet_v2_hardgate) Standalone Verification:")
-    print(f"Total Parameters: {total_params:,} ({total_params/1e6:.3f}M)")
-    print(f"Outputs: {[o.shape for o in outs]}")
-    print(f"Boundary map: {b.shape}")
-    print("Verification SUCCESSFUL!")
-    print("=" * 60)
+class PIDUNetV2(EnhancedTinyPIDUNet):
+    def __init__(self, bounded_gates=True, global_context=True):
+        super().__init__()
+        if bounded_gates:
+            for name in ("bag1", "bag2", "bag3", "bag4"):
+                block = getattr(self, name)
+                replacement = BoundedPIDBlock(block.proj_p[0].in_channels,
+                                               block.proj_i[0].in_channels,
+                                               block.proj_p[0].out_channels)
+                replacement.load_state_dict(block.state_dict())
+                with torch.no_grad():
+                    replacement.alpha.fill_(math.log(.35 / .25))
+                setattr(self, name, replacement)
+        if global_context:
+            self.bottleneck = nn.Sequential(self.bottleneck, GlobalContext(192))
+        assert sum(p.numel() for p in self.parameters()) < 1_000_000
+
+import torch
+from torch import nn
+import torch.nn.functional as F
+
+class HardGatePIDBlock(BoundedPIDBlock):
+    """PID block with Hard Saliency Gating (gate = sal) without learned soft baseline floor."""
+    def forward(self, p_feat, i_feat, boundary_map):
+        size = p_feat.shape[2:]
+        i_feat = F.interpolate(i_feat, size=size, mode="bilinear", align_corners=True)
+        boundary_map = F.interpolate(boundary_map, size=size, mode="bilinear", align_corners=True)
+        sal = self.saliency_gate(i_feat)
+        p, i = self.proj_p(p_feat), self.proj_i(i_feat)
+
+        # Hard gate directly from saliency prediction
+        gate = sal
+        d = (p - self.diff_pool(p)).abs() * boundary_map.sigmoid() * gate
+        kp, ki, kd = self.pid_gate(i_feat)
+        return self.fuse(self.se(kp * p * gate + ki * i + kd * d)) + i
+
+
+class PIDUNetV2_HardGate(PIDUNetV2):
+    """Ablation: Hard Saliency Gating (gate = sal) without learned soft baseline floor."""
+    def __init__(self):
+        super().__init__(bounded_gates=False, global_context=True)
+        for name in ("bag1", "bag2", "bag3", "bag4"):
+            block = getattr(self, name)
+            rep = HardGatePIDBlock(
+                block.proj_p[0].in_channels,
+                block.proj_i[0].in_channels,
+                block.proj_p[0].out_channels
+            )
+            rep.load_state_dict(block.state_dict())
+            setattr(self, name, rep)
+        assert sum(p.numel() for p in self.parameters()) < 1_000_000
+
+
+
+# Only the public name changes; constructor and forward are inherited unchanged.
+try:
+    from models import register_model
+except ImportError:
+    def register_model(name):
+        return lambda cls: cls
+
+@register_model("pid_unet")
+class PIDUnet(PIDUNetV2_HardGate):
+    pass
+
+PIDUNet = PIDUnet
+
+# Compatibility with the previous standalone import name.
+PIDUNet_HardGate = PIDUnet
